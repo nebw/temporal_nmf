@@ -3,6 +3,7 @@ import numba
 import numpy as np
 import pandas as pd
 import psycopg2
+import sparse
 
 from temporal_nmf import evaluation
 
@@ -24,7 +25,7 @@ def combine_data(factor_df, basics_path, circadian_path):
 def get_proximity_interactions(
     ts_start, ts_end, connect_str, table_name, max_dist=150.0, query_prefix=DEFAULT_QUERY_PREFIX
 ):
-    query = """
+    query = f"""
     {query_prefix}
 
     SELECT * FROM (
@@ -63,25 +64,30 @@ def crosstab(ids, adj):
     return adj
 
 
-def create_interaction_list(interaction_df, num_individuals=8829, fps=6, ringbuffer_size=10):
+def create_interaction_list(interaction_df, num_individuals=8830, fps=6, ringbuffer_size=10):
     ts = interaction_df.timestamp.min()
 
     rbs = ringbuffer_size
     rbs_hp = (rbs // 2) + 1
 
     # cumulative interactions over whole period
-    previous_interactions = np.zeros((num_individuals, num_individuals), dtype=np.bool)
+    previous_interactions = sparse.COO([], shape=(num_individuals, num_individuals))
     # frame sliding window
-    interaction_ringbuffer = np.zeros((rbs, num_individuals, num_individuals), dtype=np.bool)
+    interaction_ringbuffer = [
+        sparse.COO([], shape=(num_individuals, num_individuals)) for i in range(rbs)
+    ]
     # cumulative interactions for all cameras within a 1/fps frame period
     # == 1 frame combined for all cameras
-    current_interactions = np.zeros((num_individuals, num_individuals), dtype=np.bool)
+    current_interactions = sparse.COO([], shape=(num_individuals, num_individuals))
 
     interval_counter = 0
 
     events = []
 
-    for timestamp, group in interaction_df.groupby("timestamp"):
+    print("Number of events {}".format(len(interaction_df)), flush=True)
+    print("Number of timestamps {}".format(len(interaction_df.timestamp.unique())), flush=True)
+
+    for timestamp, group in list(interaction_df.sort_values("timestamp").groupby("timestamp")):
         # still within current time interval
         if (timestamp - ts) < datetime.timedelta(milliseconds=int(900 / fps)):
             pass
@@ -90,7 +96,7 @@ def create_interaction_list(interaction_df, num_individuals=8829, fps=6, ringbuf
             # count as interaction if more than half of rbs consecutive frames had interactions
             # == median filter over temporal dimension with kernel size rbs
             if interval_counter >= rbs:
-                new_interactions = np.sum(interaction_ringbuffer, axis=0) > rbs_hp
+                new_interactions = sparse.stack(interaction_ringbuffer).sum(axis=0) > rbs_hp
                 stopped_interactions = (
                     previous_interactions.astype(np.int) - new_interactions.astype(np.int)
                 ) == 1
@@ -101,20 +107,21 @@ def create_interaction_list(interaction_df, num_individuals=8829, fps=6, ringbuf
 
                 previous_interactions = new_interactions
 
-            interaction_ringbuffer[interval_counter % rbs] = current_interactions.copy()
+            interaction_ringbuffer[interval_counter % rbs] = current_interactions
 
             # new time interval => reset adjacency matrix and timestamp
-            current_interactions = np.zeros_like(current_interactions)
+            current_interactions = sparse.COO([], shape=(num_individuals, num_individuals))
             ts = group.timestamp.min()
 
             interval_counter += 1
 
         # interaction adjacency matrix
-        adj = np.zeros((num_individuals, num_individuals), dtype=np.uint32)
-        adj = crosstab(group["bee_id"].values, adj)
+        adj_data = {(min(k), max(k)): 1 for k in tuple(group["bee_id"].values)}
+        adj = sparse.DOK(shape=(num_individuals, num_individuals), data=adj_data)
 
         # logical or => accumulate interactions from different cameras
         # for current time interval (~1/fps of a second)
-        current_interactions |= adj > 0
+        current_interactions += adj
+        current_interactions.clip(0, 1, current_interactions)
 
     return events
