@@ -78,7 +78,7 @@ def crosstab(ids, adj):
     return adj
 
 
-def create_interaction_list(interaction_df, num_individuals=8830, fps=6, ringbuffer_size=10):
+def create_interaction_list(interaction_df, num_individuals, fps=3, ringbuffer_size=5):
     ts = interaction_df.timestamp.min()
 
     rbs = ringbuffer_size
