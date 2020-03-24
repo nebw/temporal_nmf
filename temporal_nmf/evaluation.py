@@ -1,12 +1,13 @@
-import os
 import datetime
+import os
+
 import numpy as np
-import pandas
 import pandas as pd
 import pytz
-from bb_utils.meta import BeeMetaInfo
-import bb_utils
 from tqdm import tqdm
+
+import bb_utils
+from bb_utils.meta import BeeMetaInfo
 
 
 def load_circadian_df(curta_scratch_path):
@@ -139,7 +140,7 @@ def evaluate_regression(
     for target_var in tqdm(target_vars):
         day_onehot = pd.DataFrame(
             OneHotEncoder(sparse=False, categories="auto").fit_transform(combined.day[:, None]),
-            columns=["day_{}".format(d) for d in combined.day.unique()],
+            columns=[f"day_{d}" for d in combined.day.unique()],
         )
 
         factor_names = [c for c in combined.columns if c.startswith("f_")]
@@ -197,7 +198,7 @@ def evaluate_auc_over_time(combined, model_name, target_var="is_circadian"):
 
     day_onehot = pd.DataFrame(
         OneHotEncoder(sparse=False, categories="auto").fit_transform(combined.day[:, None]),
-        columns=["day_{}".format(d) for d in combined.day.unique()],
+        columns=[f"day_{d}" for d in combined.day.unique()],
     )
 
     factor_names = [c for c in combined.columns if c.startswith("f_")]

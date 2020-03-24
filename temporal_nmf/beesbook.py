@@ -1,11 +1,12 @@
 import datetime
+
 import numba
 import numpy as np
 import pandas as pd
 import psycopg2
 import sparse
 
-from temporal_nmf import evaluation
+from . import evaluation
 
 DEFAULT_QUERY_PREFIX = """
 SET geqo_effort to 10;

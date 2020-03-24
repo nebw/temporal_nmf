@@ -1,7 +1,7 @@
-import torch
-from torch import nn
 import numpy as np
 import pandas as pd
+import torch
+from torch import nn
 from tqdm import trange
 
 
@@ -78,7 +78,7 @@ class TemporalNMF(nn.Module):
         ages,
         symmetric=True,
     ):
-        super(TemporalNMF, self).__init__()
+        super().__init__()
 
         self.num_entities = num_entities
         self.num_hidden = num_hidden
@@ -280,7 +280,7 @@ class TemporalNMF(nn.Module):
                 day_flat = np.tile(
                     np.arange(self.num_days)[:, None], (1, len(batch_idxs))
                 ).flatten()
-                columns = ["age", "day"] + ["f_{}".format(f) for f in range(self.num_factors)]
+                columns = ["age", "day"] + [f"f_{f}" for f in range(self.num_factors)]
                 df_data = np.concatenate(
                     (bee_ages_flat[:, None], day_flat[:, None], factors_flat), axis=-1
                 )
@@ -291,7 +291,7 @@ class TemporalNMF(nn.Module):
                     df_data = np.concatenate((ids_flat[:, None], df_data), axis=-1)
 
                 if embedding_dim is not None:
-                    columns += ["e_{}".format(f) for f in range(embedding_dim)]
+                    columns += [f"e_{f}" for f in range(embedding_dim)]
                     embs_flat = np.tile(
                         embs_reduced[batch_idxs][None, :], (self.num_days, 1)
                     ).reshape(-1, embedding_dim)
@@ -323,7 +323,7 @@ class TemporalNMFWithTime(nn.Module):
         fix_output_map=False,
         symmetric=True,
     ):
-        super(TemporalNMFWithTime, self).__init__()
+        super().__init__()
 
         self.num_entities = num_entities
         self.num_hidden = num_hidden
@@ -584,7 +584,7 @@ class TemporalNMFWithTime(nn.Module):
                 day_flat = np.tile(
                     np.arange(self.num_days)[:, None], (1, len(batch_idxs))
                 ).flatten()
-                columns = ["age", "day"] + ["f_{}".format(f) for f in range(self.num_factors)]
+                columns = ["age", "day"] + [f"f_{f}" for f in range(self.num_factors)]
                 df_data = np.concatenate(
                     (bee_ages_flat[:, None], day_flat[:, None], factors_flat), axis=-1
                 )
@@ -595,7 +595,7 @@ class TemporalNMFWithTime(nn.Module):
                     df_data = np.concatenate((ids_flat[:, None], df_data), axis=-1)
 
                 if embedding_dim is not None:
-                    columns += ["e_{}".format(f) for f in range(embedding_dim)]
+                    columns += [f"e_{f}" for f in range(embedding_dim)]
                     embs_flat = np.tile(
                         embs_reduced[batch_idxs][None, :], (self.num_days, 1)
                     ).reshape(-1, embedding_dim)
