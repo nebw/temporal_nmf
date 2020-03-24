@@ -23,8 +23,20 @@ def combine_data(factor_df, basics_path, circadian_path):
 
 
 def get_proximity_interactions(
-    ts_start, ts_end, connect_str, table_name, max_dist=150.0, query_prefix=DEFAULT_QUERY_PREFIX
+    ts_start,
+    ts_end,
+    connect_str,
+    table_name,
+    max_dist=150.0,
+    min_confidence=None,
+    query_prefix=DEFAULT_QUERY_PREFIX,
 ):
+    min_confidence_query = (
+        f"AND A.bee_id_confidence >= {min_confidence} AND B.bee_id_confidence >= {min_confidence}"
+        if min_confidence is not None
+        else ""
+    )
+
     query = f"""
     {query_prefix}
 
@@ -40,6 +52,7 @@ def get_proximity_interactions(
         AND A.timestamp <= %s
         AND B.timestamp >= %s
         AND B.timestamp <= %s
+        {min_confidence_query}
         AND A.bee_id < B.bee_id
     ) _subquery
     WHERE distance < %s
