@@ -157,14 +157,12 @@ class TemporalNMF(nn.Module):
         return logits
 
     def reconstruction(self, factors):
-        batch_size = factors.shape[1]
-
         output_map_reparam = nn.functional.softplus(self.output_map)
         output_map_reparam = output_map_reparam / output_map_reparam.sum(dim=0) * self.num_factors
 
         factors = nn.functional.relu(factors)
 
-        if symmetric:
+        if self.symmetric:
             rec_unmapped = factors[:, :, None] * factors[:, None, :]
         else:
             rec_unmapped = (
@@ -190,7 +188,7 @@ class TemporalNMF(nn.Module):
             factors_by_age = self.get_age_factors(all_idxs)
 
             if with_offsets:
-                embs, factor_offsets = self.get_embedding_factor_offsets(all_idxs)
+                _, factor_offsets = self.get_embedding_factor_offsets(all_idxs)
                 factors_by_emb = factors_by_age + factor_offsets
             else:
                 factors_by_emb = factors_by_age
@@ -409,8 +407,6 @@ class TemporalNMFWithTime(nn.Module):
         return logits
 
     def reconstruction(self, factors):
-        batch_size = factors.shape[1]
-
         output_map_reparam = nn.functional.softplus(self.output_map)
         output_map_reparam = output_map_reparam / output_map_reparam.sum(dim=0) * self.num_factors
         output_map_reparam = output_map_reparam.to(factors.device)
@@ -442,7 +438,7 @@ class TemporalNMFWithTime(nn.Module):
             factors_by_age = self.get_age_factors(all_idxs)
 
             if with_offsets:
-                embs, factor_offsets = self.get_embedding_factor_offsets(all_idxs)
+                _, factor_offsets = self.get_embedding_factor_offsets(all_idxs)
                 factors_by_emb = factors_by_age + factor_offsets
             else:
                 factors_by_emb = factors_by_age
@@ -618,7 +614,6 @@ class TemporalNMFWithTime(nn.Module):
             device = self.get_device()
             idxs = torch.arange(0, self.num_entities).to(device)
 
-            batch_size = len(idxs)
             ages = self.ages[:, idxs] / self.std_age
 
             embs_orig = self.embeddings(idxs.to(device))
