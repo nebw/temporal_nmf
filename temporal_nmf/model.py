@@ -126,7 +126,9 @@ class TemporalNMF(nn.Module):
         ages = self.ages[:, idxs] / self.std_age
 
         factors_by_age = self.age_embedder(
-            torch.clamp_min(ages.view(-1, 1), 0).to(self.get_device())
+            torch.clamp_min(ages.view(-1, 1), 0)
+            .pin_memory()
+            .to(self.get_device(), non_blocking=True)
         )
         factors_by_age = factors_by_age.view(self.num_days, batch_size, self.num_factors)
 
@@ -138,12 +140,12 @@ class TemporalNMF(nn.Module):
         batch_size = len(idxs)
         ages = self.ages[:, idxs] / self.std_age
 
-        embs = self.embeddings(idxs.to(device))
+        embs = self.embeddings(idxs.pin_memory().to(device, non_blocking=True))
         offsets = self.offsetter(
             torch.cat(
                 (
                     embs[None, :, :].repeat(self.num_days, 1, 1),
-                    torch.clamp_min(ages[:, :, None], 0).to(device),
+                    torch.clamp_min(ages[:, :, None], 0).pin_memory().to(device, non_blocking=True),
                 ),
                 dim=-1,
             ).view(-1, self.num_embeddings + 1)
@@ -211,7 +213,9 @@ class TemporalNMF(nn.Module):
             torch.mean(
                 torch.pow(
                     (self.embeddings.weight.transpose(0, 1) @ self.embeddings.weight)
-                    - (torch.eye(self.num_embeddings, dtype=torch.float32)).to(self.get_device()),
+                    - (torch.eye(self.num_embeddings, dtype=torch.float32)).to(
+                        self.get_device(), non_blocking=True
+                    ),
                     2,
                 )
             )
