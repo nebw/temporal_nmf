@@ -7,13 +7,13 @@ from tqdm import trange
 
 def _default_age_embedder(num_hidden, num_factors):
     return nn.Sequential(
-        nn.Linear(1, num_hidden),
+        nn.utils.weight_norm(nn.Linear(1, num_hidden)),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden),
+        nn.utils.weight_norm(nn.Linear(num_hidden, num_hidden)),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden),
+        nn.utils.weight_norm(nn.Linear(num_hidden, num_hidden)),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden),
+        nn.utils.weight_norm(nn.Linear(num_hidden, num_hidden)),
         nn.LeakyReLU(0.3),
         nn.Linear(num_hidden, num_factors),
     )
@@ -21,13 +21,13 @@ def _default_age_embedder(num_hidden, num_factors):
 
 def _default_discriminator(num_embeddings, num_hidden, num_classes):
     return nn.Sequential(
-        nn.utils.spectral_norm(nn.Linear(num_embeddings, num_hidden)),
+        nn.Linear(num_embeddings, num_hidden),
         nn.LeakyReLU(0.3),
-        nn.utils.spectral_norm(nn.Linear(num_hidden, num_hidden)),
+        nn.Linear(num_hidden, num_hidden),
         nn.LeakyReLU(0.3),
-        nn.utils.spectral_norm(nn.Linear(num_hidden, num_hidden)),
+        nn.Linear(num_hidden, num_hidden),
         nn.LeakyReLU(0.3),
-        nn.utils.spectral_norm(nn.Linear(num_hidden, num_hidden)),
+        nn.Linear(num_hidden, num_hidden),
         nn.LeakyReLU(0.3),
         nn.Linear(num_hidden, num_classes),
     )
@@ -35,17 +35,15 @@ def _default_discriminator(num_embeddings, num_hidden, num_classes):
 
 def _default_offsetter(num_embeddings, num_hidden, num_factors):
     return nn.Sequential(
-        nn.Linear(1 + num_embeddings, num_hidden, bias=False),
+        nn.utils.weight_norm(nn.Linear(1, num_hidden, bias=True)),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden, bias=False),
+        nn.utils.weight_norm(nn.Linear(num_hidden, num_hidden, bias=True)),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden, bias=False),
+        nn.utils.weight_norm(nn.Linear(num_hidden, num_hidden, bias=True)),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden, bias=False),
+        nn.utils.weight_norm(nn.Linear(num_hidden, num_hidden, bias=True)),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden, bias=False),
-        nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_factors, bias=False),
+        nn.Linear(num_hidden, num_factors * num_embeddings, bias=True),
     )
 
 
@@ -80,6 +78,7 @@ class TemporalNMF(nn.Module):
         age_embedder=None,
         discriminator=None,
         offsetter=None,
+        max_norm_embedding=1,
     ):
         super().__init__()
 
@@ -109,9 +108,10 @@ class TemporalNMF(nn.Module):
             else offsetter
         )
 
-        self.embeddings = nn.Embedding(num_entities, num_embeddings)
+        self.embeddings = nn.Embedding(
+            num_entities, num_embeddings, max_norm=max_norm_embedding, norm_type=1
+        )
 
-        # TODO: data-based init
         self.daily_bias = nn.Parameter(torch.zeros(num_days, num_matrices))
 
         if symmetric:
@@ -121,6 +121,7 @@ class TemporalNMF(nn.Module):
 
         self.ages = torch.from_numpy(ages)
         self.std_age = torch.std(self.ages[self.ages > 0])
+        self.mean_age = torch.mean(self.ages[self.ages > 0])
 
         self.modules = nn.ModuleList((self.age_embedder, self.discriminator, self.offsetter))
 
@@ -135,33 +136,37 @@ class TemporalNMF(nn.Module):
 
     def get_age_factors(self, idxs):
         batch_size = len(idxs)
-        ages = self.ages[:, idxs] / self.std_age
+        ages = (self.ages[:, idxs] - self.mean_age) / self.std_age
 
         factors_by_age = self.age_embedder(
-            torch.clamp_min(ages.view(-1, 1), 0)
-            .pin_memory()
-            .to(self.get_device(), non_blocking=True)
+            ages.view(-1, 1).pin_memory().to(self.get_device(), non_blocking=True)
         )
         factors_by_age = factors_by_age.view(self.num_days, batch_size, self.num_factors)
 
         return factors_by_age
 
+    def get_basis_functions(self, ages):
+        num_days = ages.shape[0]
+        batch_size = ages.shape[1]
+
+        basis_functions = self.offsetter(ages)
+        basis_functions = basis_functions.view(
+            num_days, batch_size, self.num_embeddings, self.num_factors
+        )
+
+        return basis_functions
+
     def get_embedding_factor_offsets(self, idxs):
         device = self.get_device()
 
-        batch_size = len(idxs)
-        ages = self.ages[:, idxs] / self.std_age
+        ages = (self.ages[:, idxs] - self.mean_age) / self.std_age
+        ages = ages[:, :, None].pin_memory().to(device, non_blocking=True)
 
-        embs = self.embeddings(idxs.pin_memory().to(device, non_blocking=True))
-        offsets = self.offsetter(
-            torch.cat(
-                (
-                    embs[None, :, :].repeat(self.num_days, 1, 1),
-                    torch.clamp_min(ages[:, :, None], 0).pin_memory().to(device, non_blocking=True),
-                ),
-                dim=-1,
-            ).view(-1, self.num_embeddings + 1)
-        ).view(self.num_days, batch_size, self.num_factors)
+        embs = self.embeddings(idxs.pin_memory().to(device, non_blocking=True)).abs()
+
+        basis_functions = self.get_basis_functions(ages)
+        offsets = basis_functions * embs[None, :, :, None].repeat(self.num_days, 1, 1, 1)
+        offsets = offsets.sum(dim=-2)
 
         return embs, offsets
 
@@ -193,10 +198,6 @@ class TemporalNMF(nn.Module):
 
     def reconstruct_inputs(self, with_offsets=True):
         with torch.no_grad():
-            daily_bias_reshaped = self.daily_bias[:, None, None, :].repeat(
-                1, self.num_entities, self.num_entities, 1
-            )
-
             all_idxs = torch.LongTensor(list(range(self.num_entities)))
 
             factors_by_age = self.get_age_factors(all_idxs)
@@ -212,8 +213,12 @@ class TemporalNMF(nn.Module):
                 recs.append(
                     (
                         self.reconstruction(factors_by_emb[day][None, :, :])
-                        + daily_bias_reshaped[day]
-                    ).cpu()
+                        + self.daily_bias[day, None, None, :].repeat(
+                            self.num_entities, self.num_entities, 1
+                        )
+                    )
+                    .cpu()
+                    .half()
                 )
 
             recs = torch.cat(recs, dim=0)
@@ -241,11 +246,59 @@ class TemporalNMF(nn.Module):
 
     @staticmethod
     def offset_l2_loss(factor_offsets):
-        return torch.sqrt(torch.mean(torch.pow(factor_offsets.mean(dim=1), 2)))
+        return torch.sqrt(torch.mean(torch.pow(factor_offsets, 2)))
+
+    @staticmethod
+    def offset_l1_loss(factor_offsets):
+        return torch.mean(torch.abs(factor_offsets))
 
     @staticmethod
     def factor_l1_loss(factors):
-        return factors.abs().mean()
+        return factors.abs().sum(dim=-1).mean()
+
+    def basis_function_l1_loss(self, min_age=0, max_age=60, num_age_samples=100):
+        ages = (
+            torch.linspace(min_age, max_age, steps=num_age_samples, device=self.get_device())
+            - self.mean_age
+        ) / self.std_age
+        basis_functions = self.get_basis_functions(ages[:, None, None])
+
+        return basis_functions.abs().sum(dim=-2).mean()
+
+    def embedding_l2_loss(self):
+        return torch.sqrt((self.embeddings.weight ** 2).mean())
+
+    def embedding_l1_loss(self):
+        return torch.mean((self.embeddings.weight).abs().sum(dim=-1))
+
+    def embedding_sparsity_loss(self):
+        return (
+            1
+            - self.embeddings.weight.abs().max(dim=1).values
+            / self.embeddings.weight.abs().sum(dim=1)
+        ).mean()
+
+    def factor_correlation_loss(self, device, min_age=0, max_age=60, num_age_samples=100):
+        ages = (
+            torch.from_numpy(np.linspace(min_age, max_age, num=num_age_samples)[None, :]).float()
+            - self.mean_age
+        ) / self.std_age
+
+        factors_by_age = self.age_embedder(
+            ages.view(-1, 1).float().pin_memory().to(device, non_blocking=True)
+        )
+        factors_by_age = factors_by_age.view(-1, self.num_factors)
+
+        vf = factors_by_age - torch.mean(factors_by_age, dim=0)[None, :]
+        factors_corrs = (vf.T @ vf) * torch.rsqrt(
+            (vf ** 2).sum(dim=0)[None, :] * (vf ** 2).sum(dim=0)[:, None]
+        )
+        factors_corrs *= 1 - torch.eye(self.num_factors, device=factors_corrs.device)
+
+        factor_l1 = factors_by_age.abs().sum(dim=0)[None, :]
+        factor_cross_l1 = factor_l1.T * factor_l1
+
+        return (factors_corrs.abs()).mean(), factors_corrs, factor_cross_l1
 
     def forward(self, idxs):
         batch_size = len(idxs)
@@ -264,12 +317,12 @@ class TemporalNMF(nn.Module):
     def get_factor_df(self, ids=None, embedding_dim=2, batch_size=128):
         if embedding_dim is not None:
             if embedding_dim == self.num_embeddings:
-                embs_reduced = self.embeddings.weight.data.cpu().numpy()
+                embs_reduced = np.abs(self.embeddings.weight.data.cpu().numpy())
             else:
                 from umap import UMAP
 
                 embs_reduced = UMAP(n_components=embedding_dim).fit_transform(
-                    self.embeddings.weight.data.cpu().numpy()
+                    np.abs(self.embeddings.weight.data.cpu().numpy())
                 )
 
         with torch.no_grad():
@@ -278,14 +331,7 @@ class TemporalNMF(nn.Module):
 
             while idx < self.num_entities:
                 batch_idxs = torch.arange(idx, min((idx + batch_size, self.num_entities)))
-                (
-                    rec_by_age,
-                    rec_by_emb,
-                    factors_by_age,
-                    factors_by_emb,
-                    factor_offsets,
-                    embs,
-                ) = self.forward(batch_idxs)
+                (_, _, _, factors_by_emb, _, _,) = self.forward(batch_idxs)
 
                 idx += batch_size
 
@@ -320,354 +366,3 @@ class TemporalNMF(nn.Module):
         factor_df = factor_df[factor_df.age >= 0]
 
         return factor_df
-
-
-class TemporalNMFWithTime(nn.Module):
-    def __init__(
-        self,
-        num_entities,
-        num_embeddings,
-        num_factors,
-        num_hidden,
-        num_days,
-        num_timesteps,
-        num_matrices,
-        num_classes,
-        ages,
-        fix_output_map=False,
-        symmetric=True,
-    ):
-        super().__init__()
-
-        self.num_entities = num_entities
-        self.num_hidden = num_hidden
-
-        self.symmetric = symmetric
-        if not symmetric:
-            num_factors *= 2
-
-        self.num_factors = num_factors
-        self.num_embeddings = num_embeddings
-        self.num_classes = num_classes
-        self.num_days = num_days
-        self.num_timesteps = num_timesteps
-        self.num_matrices = num_matrices
-
-        self.age_embedder = _default_age_embedder(num_hidden, num_factors)
-        self.discriminator = _default_discriminator(num_embeddings, num_hidden, self.num_classes)
-        self.offsetter = _default_offsetter(num_embeddings, num_hidden, num_factors)
-        self.time_embedder = _default_time_embedder(num_factors, num_hidden)
-
-        self.embeddings = nn.Embedding(num_entities, num_embeddings, max_norm=1)
-        nn.init.orthogonal_(self.embeddings.weight.data)
-
-        # TODO: data-based init
-        self.daily_bias = nn.Parameter(torch.zeros(num_days, num_matrices))
-
-        num_output_factors = (
-            self.num_factors
-        )  # self.num_factors if symmetric else self.num_factors // 2
-
-        if fix_output_map:
-            self.output_map = torch.ones(num_matrices, num_output_factors)
-        else:
-            self.output_map = nn.Parameter(torch.ones(num_matrices, num_output_factors))
-
-        self.ages = torch.from_numpy(ages)
-        self.std_age = torch.std(self.ages)
-
-        self.modules = nn.ModuleList((self.age_embedder, self.discriminator, self.offsetter))
-
-    def get_device(self):
-        return next(self.parameters()).device
-
-    def get_model_parameters(self):
-        return [params for name, params in self.named_parameters() if "discriminator" not in name]
-
-    def get_discriminator_parameters(self):
-        return [params for name, params in self.named_parameters() if "discriminator" in name]
-
-    def get_age_factors(self, idxs):
-        batch_size = len(idxs)
-        ages = self.ages[:, idxs] / self.std_age
-
-        factors_by_age = self.age_embedder(
-            torch.clamp_min(ages.view(-1, 1), 0).to(self.get_device())
-        )
-        factors_by_age = factors_by_age.view(self.num_days, batch_size, self.num_factors)
-
-        return factors_by_age
-
-    def get_embedding_factor_offsets(self, idxs):
-        device = self.get_device()
-
-        batch_size = len(idxs)
-        ages = self.ages[:, idxs] / self.std_age
-
-        embs = self.embeddings(idxs.to(device))
-        offsets = self.offsetter(
-            torch.cat(
-                (
-                    embs[None, :, :].repeat(self.num_days, 1, 1),
-                    torch.clamp_min(ages[:, :, None], 0).to(device),
-                ),
-                dim=-1,
-            ).view(-1, self.num_embeddings + 1)
-        ).view(self.num_days, batch_size, self.num_factors)
-
-        return embs, offsets
-
-    def get_discriminator_output(self, embs):
-        logits = self.discriminator(embs)
-
-        return logits
-
-    def reconstruction(self, factors):
-        output_map_reparam = nn.functional.softplus(self.output_map)
-        output_map_reparam = output_map_reparam / output_map_reparam.sum(dim=0) * self.num_factors
-        output_map_reparam = output_map_reparam.to(factors.device)
-
-        factors = (
-            nn.functional.relu(factors[:, :, :, None, :])
-            * output_map_reparam[None, None, None, :, :]
-        )
-        factors = torch.stack(factors.split(self.num_matrices, dim=-1), dim=-1)[:, :, :, 0, :, :]
-
-        if self.symmetric:
-            rec_mapped = (factors[:, :, :, None] * factors[:, :, None]).sum(dim=-1)
-        else:
-            rec_mapped = (
-                factors[:, :, :, None, :, self.num_factors // 2 :]
-                * factors[:, :, None, :, :, self.num_factors // 2 :]
-            ).sum(dim=-1)
-
-        return rec_mapped
-
-    def reconstruct_inputs(self, with_offsets=True):
-        with torch.no_grad():
-            daily_bias_reshaped = self.daily_bias[:, None, None, :].repeat(
-                1, self.num_entities, self.num_entities, 1
-            )
-
-            all_idxs = torch.LongTensor(list(range(self.num_entities)))
-
-            factors_by_age = self.get_age_factors(all_idxs)
-
-            if with_offsets:
-                _, factor_offsets = self.get_embedding_factor_offsets(all_idxs)
-                factors_by_emb = factors_by_age + factor_offsets
-            else:
-                factors_by_emb = factors_by_age
-
-            recs = []
-            for day in trange(self.num_days):
-                recs.append(
-                    (
-                        self.reconstruction(factors_by_emb[day][None, :, :])
-                        + daily_bias_reshaped[day]
-                    ).cpu()
-                )
-
-            recs = torch.cat(recs, dim=0)
-
-        return recs
-
-    def ortho_loss(self):
-        return torch.sqrt(
-            torch.mean(
-                torch.pow(
-                    (self.embeddings.weight.transpose(0, 1) @ self.embeddings.weight)
-                    - (torch.eye(self.num_embeddings, dtype=torch.float32)).to(self.get_device()),
-                    2,
-                )
-            )
-        )
-
-    @staticmethod
-    def nonnegativity_loss(factors_by_age, factors_by_emb):
-        return (
-            nn.functional.relu(-factors_by_emb).mean() + nn.functional.relu(-factors_by_age).mean()
-        )
-
-    @staticmethod
-    def offset_l2_loss(factor_offsets):
-        return torch.sqrt(torch.mean(torch.pow(factor_offsets.mean(dim=1), 2)))
-
-    @staticmethod
-    def factor_l1_loss(factors):
-        return factors.abs().mean()
-
-    def timeembed_factors(self, factors):
-        times = torch.arange(self.num_timesteps, dtype=torch.float32) / (self.num_timesteps - 1)
-        times *= 2 * np.pi
-        times = torch.stack((np.sin(times), np.cos(times)), dim=1).to(factors.device)
-
-        factors_repeated = factors[:, None, :, :].repeat(1, self.num_timesteps, 1, 1)
-
-        factors_with_time = torch.cat(
-            (
-                factors_repeated,
-                times[None, :, None, :].repeat(self.num_days, 1, factors.shape[1], 1),
-            ),
-            dim=-1,
-        )
-
-        offsets = self.time_embedder(factors_with_time)
-        factors_timeembedded = factors_repeated + offsets
-
-        return factors_timeembedded, offsets
-
-    def forward(self, idxs):
-        batch_size = len(idxs)
-
-        daily_bias_reshaped = self.daily_bias[:, None, None, None, :].repeat(
-            1, self.num_timesteps, batch_size, batch_size, 1
-        )
-
-        factors_by_age = self.get_age_factors(idxs)
-        factors_by_age_timeembedded, factors_by_age_timeembedded_offsets = self.timeembed_factors(
-            factors_by_age
-        )
-
-        rec_by_age = self.reconstruction(factors_by_age_timeembedded) + daily_bias_reshaped
-
-        embs, factor_offsets = self.get_embedding_factor_offsets(idxs)
-        factors_by_emb = factors_by_age + factor_offsets
-        factors_by_emb_timeembedded, factors_by_emb_timeembedded_offsets = self.timeembed_factors(
-            factors_by_emb
-        )
-
-        rec_by_emb = self.reconstruction(factors_by_emb_timeembedded) + daily_bias_reshaped
-
-        return (
-            rec_by_age,
-            rec_by_emb,
-            factors_by_age,
-            factors_by_emb,
-            factors_by_age_timeembedded,
-            factors_by_emb_timeembedded,
-            factors_by_age_timeembedded_offsets,
-            factors_by_emb_timeembedded_offsets,
-            factor_offsets,
-            embs,
-        )
-
-    def get_factor_df(
-        self, ids=None, embedding_dim=2, batch_size=128, importance_weighted_embeddings=True
-    ):
-        if embedding_dim is not None:
-            embs_reduced = self.embeddings.weight.data.cpu().numpy()
-            embs_reduced = embs_reduced - embs_reduced.mean(axis=0)[None, :]
-
-            if importance_weighted_embeddings:
-                importances = self.get_embedding_importances()
-                embs_reduced = embs_reduced * importances[None, :]
-
-            if embedding_dim != self.num_embeddings:
-                from umap import UMAP
-
-                embs_reduced = UMAP(n_components=embedding_dim, min_dist=0).fit_transform(
-                    embs_reduced
-                )
-
-        with torch.no_grad():
-            idx = 0
-            dfs = []
-
-            while idx < self.num_entities:
-                batch_idxs = torch.arange(idx, min((idx + batch_size, self.num_entities)))
-                (
-                    rec_by_age,
-                    rec_by_emb,
-                    factors_by_age,
-                    factors_by_emb,
-                    _,
-                    _,
-                    _,
-                    _,
-                    factor_offsets,
-                    embs,
-                ) = self.forward(batch_idxs)
-
-                idx += batch_size
-
-                bee_ages_flat = self.ages[:, batch_idxs].numpy().flatten()
-                factors_flat = factors_by_emb.data.cpu().numpy().reshape(-1, self.num_factors)
-                day_flat = np.tile(
-                    np.arange(self.num_days)[:, None], (1, len(batch_idxs))
-                ).flatten()
-                columns = ["age", "day"] + [f"f_{f}" for f in range(self.num_factors)]
-                df_data = np.concatenate(
-                    (bee_ages_flat[:, None], day_flat[:, None], factors_flat), axis=-1
-                )
-
-                if ids is not None:
-                    columns = ["bee_id"] + columns
-                    ids_flat = np.tile(ids[batch_idxs][None, :], (self.num_days, 1)).flatten()
-                    df_data = np.concatenate((ids_flat[:, None], df_data), axis=-1)
-
-                if embedding_dim is not None:
-                    columns += [f"e_{f}" for f in range(embedding_dim)]
-                    embs_flat = np.tile(
-                        embs_reduced[batch_idxs][None, :], (self.num_days, 1)
-                    ).reshape(-1, embedding_dim)
-                    df_data = np.concatenate((df_data, embs_flat), axis=-1)
-
-                factor_df = pd.DataFrame(df_data, columns=columns)
-                dfs.append(factor_df)
-
-            factor_df = pd.concat(dfs)
-
-        factor_df.reset_index(inplace=True, drop=True)
-        factor_df = factor_df[factor_df.age >= 0]
-
-        return factor_df
-
-    def get_embedding_importances(self, num_distortions=64):
-        importances = []
-
-        with torch.no_grad():
-            device = self.get_device()
-            idxs = torch.arange(0, self.num_entities).to(device)
-
-            ages = self.ages[:, idxs] / self.std_age
-
-            embs_orig = self.embeddings(idxs.to(device))
-            embs_repeated = embs_orig[:, None, :].repeat(1, num_distortions, 1)
-
-            offsets_orig = self.offsetter(
-                torch.cat(
-                    (
-                        embs_repeated[None, :, :].repeat(self.num_days, 1, 1, 1),
-                        torch.clamp_min(ages[:, :, None, None], 0)
-                        .repeat(1, 1, num_distortions, 1)
-                        .to(device),
-                    ),
-                    dim=-1,
-                ).view(-1, self.num_embeddings + 1)
-            )
-
-            for emb_dim in range(self.num_embeddings):
-                distortions = torch.randn_like(embs_repeated) * embs_orig.std()
-
-                embs_distorted = embs_repeated.clone()
-                embs_distorted[:, :, emb_dim] = (
-                    embs_distorted[:, :, emb_dim] + distortions[:, :, emb_dim]
-                )
-
-                offsets_distorted = self.offsetter(
-                    torch.cat(
-                        (
-                            embs_distorted[None, :, :].repeat(self.num_days, 1, 1, 1),
-                            torch.clamp_min(ages[:, :, None, None], 0)
-                            .repeat(1, 1, num_distortions, 1)
-                            .to(device),
-                        ),
-                        dim=-1,
-                    ).view(-1, self.num_embeddings + 1)
-                )
-
-                distortion_effect = torch.sqrt(torch.mean((offsets_distorted - offsets_orig) ** 2))
-                importances.append(distortion_effect.item())
-
-        return np.array(importances)
