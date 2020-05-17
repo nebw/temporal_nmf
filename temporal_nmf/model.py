@@ -77,6 +77,9 @@ class TemporalNMF(nn.Module):
         num_classes,
         ages,
         symmetric=True,
+        age_embedder=None,
+        discriminator=None,
+        offsetter=None,
     ):
         super().__init__()
 
@@ -92,9 +95,19 @@ class TemporalNMF(nn.Module):
         self.num_classes = num_classes
         self.num_days = num_days
 
-        self.age_embedder = _default_age_embedder(num_hidden, num_factors)
-        self.discriminator = _default_discriminator(num_embeddings, num_hidden, self.num_classes)
-        self.offsetter = _default_offsetter(num_embeddings, num_hidden, num_factors)
+        self.age_embedder = (
+            _default_age_embedder(num_hidden, num_factors) if age_embedder is None else age_embedder
+        )
+        self.discriminator = (
+            _default_discriminator(num_embeddings, num_hidden, self.num_classes)
+            if discriminator is None
+            else discriminator
+        )
+        self.offsetter = (
+            _default_offsetter(num_embeddings, num_hidden, num_factors)
+            if offsetter is None
+            else offsetter
+        )
 
         self.embeddings = nn.Embedding(num_entities, num_embeddings, max_norm=1)
         nn.init.orthogonal_(self.embeddings.weight.data)
