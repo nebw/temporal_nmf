@@ -21,13 +21,13 @@ def _default_age_embedder(num_hidden, num_factors):
 
 def _default_discriminator(num_embeddings, num_hidden, num_classes):
     return nn.Sequential(
-        nn.Linear(num_embeddings, num_hidden),
+        nn.utils.spectral_norm(nn.Linear(num_embeddings, num_hidden)),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden),
+        nn.utils.spectral_norm(nn.Linear(num_hidden, num_hidden)),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden),
+        nn.utils.spectral_norm(nn.Linear(num_hidden, num_hidden)),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden),
+        nn.utils.spectral_norm(nn.Linear(num_hidden, num_hidden)),
         nn.LeakyReLU(0.3),
         nn.Linear(num_hidden, num_classes),
     )
