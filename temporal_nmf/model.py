@@ -35,17 +35,17 @@ def _default_discriminator(num_embeddings, num_hidden, num_classes):
 
 def _default_offsetter(num_embeddings, num_hidden, num_factors):
     return nn.Sequential(
-        nn.Linear(1 + num_embeddings, num_hidden),
+        nn.Linear(1 + num_embeddings, num_hidden, bias=False),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden),
+        nn.Linear(num_hidden, num_hidden, bias=False),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden),
+        nn.Linear(num_hidden, num_hidden, bias=False),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden),
+        nn.Linear(num_hidden, num_hidden, bias=False),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden),
+        nn.Linear(num_hidden, num_hidden, bias=False),
         nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_factors),
+        nn.Linear(num_hidden, num_factors, bias=False),
     )
 
 
@@ -108,7 +108,7 @@ class TemporalNMF(nn.Module):
             self.output_map = nn.Parameter(torch.ones(self.num_factors // 2, num_matrices))
 
         self.ages = torch.from_numpy(ages)
-        self.std_age = torch.std(self.ages)
+        self.std_age = torch.std(self.ages[self.ages > 0])
 
         self.modules = nn.ModuleList((self.age_embedder, self.discriminator, self.offsetter))
 
