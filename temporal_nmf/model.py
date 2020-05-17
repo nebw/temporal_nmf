@@ -109,8 +109,7 @@ class TemporalNMF(nn.Module):
             else offsetter
         )
 
-        self.embeddings = nn.Embedding(num_entities, num_embeddings, max_norm=1)
-        nn.init.orthogonal_(self.embeddings.weight.data)
+        self.embeddings = nn.Embedding(num_entities, num_embeddings)
 
         # TODO: data-based init
         self.daily_bias = nn.Parameter(torch.zeros(num_days, num_matrices))
