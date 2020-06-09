@@ -1,7 +1,9 @@
+import pathlib
 import pickle
 
 import numpy as np
 import pandas as pd
+import sparse
 import torch
 import tqdm.auto as tqdm
 import zstandard
@@ -10,87 +12,69 @@ from torch import nn
 from temporal_nmf.model import TemporalNMF
 
 
-def get_daily_interactions(interaction_path, max_days=np.inf):
-    imls_log = pickle.load(open(interaction_path, "rb"))
-
-    max_days = min(len(imls_log), max_days)
-
-    imls_log_daily = np.zeros(
-        (max_days, imls_log.shape[-1], imls_log.shape[-1], 1), dtype=np.float16,
-    )
-
-    for day in tqdm.trange(max_days):
-        imls_log_daily[day, :, :, 0] = np.log1p(imls_log[day].sum(axis=0))
-
-    return imls_log_daily
-
-
-def parse_alive_data(alive_path):
-    alive_df = pd.read_parquet(alive_path)
-    alive_bees = sorted(alive_df.bee_id.values)
-
-    id_to_idx = {bee_id: idx for (idx, bee_id) in enumerate(alive_bees)}
-    idx_to_id = {idx: bee_id for (idx, bee_id) in enumerate(alive_bees)}
-
-    alive_df.set_index("bee_id", inplace=True)
-
-    return alive_df, id_to_idx, idx_to_id
-
-
-def parse_bee_ages(alive_df, from_date_incl, num_days, num_entities):
-    bee_ages = np.ones((num_days, num_entities), dtype=np.float) * -1
-
-    for day in range(0, num_days):
-        bee_ages[day] = (from_date_incl - alive_df.sort_index().date_emerged).apply(
-            lambda td: int(td.days) + day
-        )
-        has_died = np.where(bee_ages[day] > alive_df.sort_index().days_alive)
-        bee_ages[np.ix_([day], has_died[0])] = -1
-
-    valid_ages = bee_ages >= 0
-    bee_ages = np.clip(bee_ages, 0, np.inf)
-
-    return bee_ages.astype(np.float32), valid_ages
-
-
-def parse_labels(alive_df):
-    doy_to_label = {v: k for k, v in enumerate(alive_df.doy_emerged.unique())}
-    labels = alive_df.doy_emerged.apply(lambda doy: doy_to_label[doy]).values
-
-    return labels
-
-
 class DataWrapper:
-    def __init__(
-        self, interaction_path, alive_path, from_day_incl,
-    ):
-        self.parse_interaction_data(interaction_path, alive_path)
-        self.bee_ages, self.valid_ages = parse_bee_ages(
-            self.alive_df, from_day_incl, self.num_days, self.num_entities
-        )
-        self.labels = parse_labels(self.alive_df)
+    def __init__(self, base_path, dataset_name, from_day_incl, dense=True):
+        if not isinstance(base_path, pathlib.Path):
+            base_path = pathlib.Path(base_path)
 
-        self.imls_log_daily = (self.valid_ages[:, :, None] * self.valid_ages[:, None, :])[
-            :, :, :, None
-        ].astype(np.float16) * self.imls_log_daily
+        self.from_day_incl = from_day_incl
+        self.dataset_name = dataset_name
 
-    def parse_interaction_data(self, interaction_path, alive_path, max_days=np.inf):
-        self.imls_log_daily = get_daily_interactions(interaction_path, max_days=max_days)
+        self.imls_log_daily = sparse.load_npz(base_path / f"interactions_{dataset_name}_sparse.npz")
+
+        self.dense = dense
+        if self.dense:
+            self.imls_log_daily = self.imls_log_daily.todense()
+
         self.num_days = self.imls_log_daily.shape[0]
         self.num_entities = self.imls_log_daily.shape[1]
         self.num_matrices = self.imls_log_daily.shape[-1]
 
-        alive_df, id_to_idx, idx_to_id = parse_alive_data(alive_path)
-        self.alive_df = alive_df
-        self.id_to_idx = id_to_idx
-        self.idx_to_id = idx_to_id
+        self.alive_df = pd.read_csv(
+            base_path / f"alive_{dataset_name}.csv", parse_dates=["date_emerged"]
+        )
+        self.num_classes = len(self.alive_df.date_emerged.unique())
 
-        self.num_classes = len(alive_df.doy_emerged.unique())
+        indices_df = pd.read_csv(base_path / f"indices_{dataset_name}.csv")
+        self.id_to_idx = dict(indices_df.values)
+        self.idx_to_id = dict(indices_df.values[:, ::-1])
+
+        self.bee_ages, self.valid_ages = self.parse_bee_ages(
+            self.alive_df, from_day_incl, self.num_days, self.num_entities
+        )
+
+        self.labels = self.parse_labels(self.alive_df)
+
+    @staticmethod
+    def parse_bee_ages(alive_df, from_date_incl, num_days, num_entities):
+        bee_ages = np.ones((num_days, num_entities), dtype=np.float) * -1
+        valid_ages = np.zeros((num_days, num_entities), dtype=np.bool)
+
+        for day in range(0, num_days):
+            bee_ages[day] = (from_date_incl - alive_df.sort_index().date_emerged).apply(
+                lambda td: int(td.days) + day
+            )
+
+            valid_ages[day] = bee_ages[day] >= 0
+            has_died = np.where(bee_ages[day] > alive_df.sort_index().days_alive)
+            valid_ages[np.ix_([day], has_died[0])] = False
+
+        bee_ages = np.clip(bee_ages, 0, np.inf)
+
+        return bee_ages.astype(np.float32), valid_ages
+
+    @staticmethod
+    def parse_labels(alive_df):
+        date_to_label = {v: k for k, v in enumerate(alive_df.date_emerged.unique())}
+        labels = np.array([date_to_label[d] for d in alive_df.date_emerged.values])
+
+        return labels
 
     def save(self, path):
         with open(path, "wb") as fh:
             cctx = zstandard.ZstdCompressor()
             with cctx.stream_writer(fh) as compressor:
+                self.imls_log_daily = sparse.from_numpy(self.imls_log_daily)
                 compressor.write(pickle.dumps(self, protocol=4))
 
     @classmethod
@@ -98,7 +82,10 @@ class DataWrapper:
         with open(path, "rb") as fh:
             dctx = zstandard.ZstdDecompressor()
             with dctx.stream_reader(fh) as decompressor:
-                return pickle.loads(decompressor.read())
+                wrapper = pickle.loads(decompressor.read())
+                if wrapper.dense:
+                    wrapper.imls_log_daily = wrapper.imls_log_daily.todense()
+                return wrapper
 
 
 class TrainingWrapper:
@@ -170,22 +157,15 @@ class TrainingWrapper:
         disc_logits = self.tnmf.get_discriminator_output(embs)
         batch_disc_loss = self.disc_loss(disc_logits, disc_targets)
 
-        factor_corr_loss, _, _ = self.tnmf.factor_correlation_loss(self.device)
-
         batch_losses = {
             "reconstruction_by_age": (self.loss(batch_targets, rec_by_age) * loss_mask).sum()
             / loss_mask.sum(),
             "reconstruction_by_emb": (self.loss(batch_targets, rec_by_emb) * loss_mask).sum()
             / loss_mask.sum(),
-            "factor_offsets_l2": self.tnmf.offset_l2_loss(factor_offsets),
             "factor_l1": (self.tnmf.factor_l1_loss(factors_by_age)),
-            "embedding_orthogonality": self.tnmf.ortho_loss(),
             "factor_nonnegativity": self.tnmf.nonnegativity_loss(factors_by_age, factors_by_emb),
             "adversarial": -batch_disc_loss.mean(),
-            "factor_correlation": factor_corr_loss,
             "basis_function_l1": self.tnmf.basis_function_l1_loss(),
-            "embedding_l2": self.tnmf.embedding_l2_loss(),
-            "embedding_l1": self.tnmf.embedding_l1_loss(),
             "embedding_sparsity": self.tnmf.embedding_sparsity_loss()
             * self.tnmf.embedding_l1_loss(),
         }

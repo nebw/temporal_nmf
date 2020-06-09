@@ -111,6 +111,7 @@ class TemporalNMF(nn.Module):
         self.embeddings = nn.Embedding(
             num_entities, num_embeddings, max_norm=max_norm_embedding, norm_type=1
         )
+        nn.init.orthogonal_(self.embeddings.weight, gain=10)
 
         self.daily_bias = nn.Parameter(torch.zeros(num_days, num_matrices))
 
@@ -225,32 +226,11 @@ class TemporalNMF(nn.Module):
 
         return recs
 
-    def ortho_loss(self):
-        return torch.sqrt(
-            torch.mean(
-                torch.pow(
-                    (self.embeddings.weight.transpose(0, 1) @ self.embeddings.weight)
-                    - (torch.eye(self.num_embeddings, dtype=torch.float32)).to(
-                        self.get_device(), non_blocking=True
-                    ),
-                    2,
-                )
-            )
-        )
-
     @staticmethod
     def nonnegativity_loss(factors_by_age, factors_by_emb):
         return (
             nn.functional.relu(-factors_by_emb).mean() + nn.functional.relu(-factors_by_age).mean()
         )
-
-    @staticmethod
-    def offset_l2_loss(factor_offsets):
-        return torch.sqrt(torch.mean(torch.pow(factor_offsets, 2)))
-
-    @staticmethod
-    def offset_l1_loss(factor_offsets):
-        return torch.mean(torch.abs(factor_offsets))
 
     @staticmethod
     def factor_l1_loss(factors):
@@ -265,9 +245,6 @@ class TemporalNMF(nn.Module):
 
         return basis_functions.abs().sum(dim=-2).mean()
 
-    def embedding_l2_loss(self):
-        return torch.sqrt((self.embeddings.weight ** 2).mean())
-
     def embedding_l1_loss(self):
         return torch.mean((self.embeddings.weight).abs().sum(dim=-1))
 
@@ -277,28 +254,6 @@ class TemporalNMF(nn.Module):
             - self.embeddings.weight.abs().max(dim=1).values
             / self.embeddings.weight.abs().sum(dim=1)
         ).mean()
-
-    def factor_correlation_loss(self, device, min_age=0, max_age=60, num_age_samples=100):
-        ages = (
-            torch.from_numpy(np.linspace(min_age, max_age, num=num_age_samples)[None, :]).float()
-            - self.mean_age
-        ) / self.std_age
-
-        factors_by_age = self.age_embedder(
-            ages.view(-1, 1).float().pin_memory().to(device, non_blocking=True)
-        )
-        factors_by_age = factors_by_age.view(-1, self.num_factors)
-
-        vf = factors_by_age - torch.mean(factors_by_age, dim=0)[None, :]
-        factors_corrs = (vf.T @ vf) * torch.rsqrt(
-            (vf ** 2).sum(dim=0)[None, :] * (vf ** 2).sum(dim=0)[:, None]
-        )
-        factors_corrs *= 1 - torch.eye(self.num_factors, device=factors_corrs.device)
-
-        factor_l1 = factors_by_age.abs().sum(dim=0)[None, :]
-        factor_cross_l1 = factor_l1.T * factor_l1
-
-        return (factors_corrs.abs()).mean(), factors_corrs, factor_cross_l1
 
     def forward(self, idxs):
         batch_size = len(idxs)
