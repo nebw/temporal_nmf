@@ -99,19 +99,18 @@ class TrainingWrapper:
         self.num_hidden = num_hidden
         self.num_embeddings = num_embeddings
         self.num_factors = num_factors
+        self.num_classes = sum([d.num_classes for d in datasets])
 
         self.age_embedder = temporal_nmf.model._default_age_embedder(num_hidden, num_factors).to(
             device
         )
         self.discriminator = temporal_nmf.model._default_discriminator(
-            num_embeddings, num_hidden, data16.num_classes + data19.num_classes,
+            num_embeddings, num_hidden, self.num_classes
         ).to(device)
 
         self.offsetter = temporal_nmf.model._default_offsetter(
             num_embeddings, num_hidden, num_factors
         ).to(device)
-
-        self.num_classes = sum([d.num_classes for d in datasets])
 
         self.loss = nn.SmoothL1Loss(reduction="none").to(self.device)
         self.disc_loss = nn.CrossEntropyLoss(reduction="none").to(self.device)
@@ -251,3 +250,16 @@ class TrainingWrapper:
         self.loss_hist.append({k: v.detach().cpu().item() for k, v in batch_losses_scaled.items()})
 
         return combined_loss.data.cpu().item()
+
+    def save(self, path):
+        with open(path, "wb") as fh:
+            self.datasets = None
+            torch.save(self, fh, pickle_protocol=4)
+
+    @classmethod
+    def load(cls, path, datasets):
+        with open(path, "rb") as fh:
+            wrapper = torch.load(fh)
+            wrapper.datasets = datasets
+
+            return wrapper
