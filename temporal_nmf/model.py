@@ -47,22 +47,6 @@ def _default_offsetter(num_embeddings, num_hidden, num_factors):
     )
 
 
-def _default_time_embedder(num_factors, num_hidden):
-    return nn.Sequential(
-        nn.Linear(num_factors + 2, num_hidden),
-        nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden),
-        nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden),
-        nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden),
-        nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_hidden),
-        nn.LeakyReLU(0.3),
-        nn.Linear(num_hidden, num_factors),
-    )
-
-
 class TemporalNMF(nn.Module):
     def __init__(
         self,

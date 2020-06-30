@@ -91,7 +91,7 @@ class DataWrapper:
 
 class TrainingWrapper:
     def __init__(
-        self, datasets, device, lambdas, num_hidden=32, num_embeddings=15, num_factors=8,
+        self, datasets, device, lambdas, num_hidden=32, num_embeddings=16, num_factors=8,
     ):
         self.datasets = datasets
         self.device = device
