@@ -269,7 +269,7 @@ class TemporalNMF(nn.Module):
 
         return rec_by_age, rec_by_emb, factors_by_age, factors_by_emb, factor_offsets, embs
 
-    def get_factor_df(self, ids=None, embedding_dim=2, batch_size=128):
+    def get_factor_df(self, ids=None, embedding_dim=2, batch_size=128, valid_ages=None):
         if embedding_dim is not None:
             if embedding_dim == self.num_embeddings:
                 embs_reduced = np.abs(self.embeddings.weight.data.cpu().numpy())
@@ -304,6 +304,11 @@ class TemporalNMF(nn.Module):
                     columns = ["bee_id"] + columns
                     ids_flat = np.tile(ids[batch_idxs][None, :], (self.num_days, 1)).flatten()
                     df_data = np.concatenate((ids_flat[:, None], df_data), axis=-1)
+
+                if valid_ages is not None:
+                    columns = ["valid_age"] + columns
+                    valid_flat = valid_ages[:, batch_idxs].flatten()
+                    df_data = np.concatenate((valid_flat[:, None], df_data), axis=-1)
 
                 if embedding_dim is not None:
                     columns += [f"e_{f}" for f in range(embedding_dim)]
