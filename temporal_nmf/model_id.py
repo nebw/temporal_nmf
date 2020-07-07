@@ -56,6 +56,7 @@ class TemporalNMF(nn.Module):
         num_factors,
         num_hidden,
         num_days,
+        num_timesteps,
         num_matrices,
         num_classes,
         ages,
@@ -78,6 +79,7 @@ class TemporalNMF(nn.Module):
         self.num_embeddings = num_embeddings
         self.num_classes = num_classes
         self.num_days = num_days
+        self.num_timesteps = num_timesteps
 
         self.age_embedder = (
             _default_age_embedder(num_hidden, num_factors) if age_embedder is None else age_embedder
