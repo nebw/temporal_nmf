@@ -279,9 +279,11 @@ class TrainingWrapper:
         return combined_loss.data.cpu().item()
 
     def save(self, path):
+        datasets = self.datasets
         with open(path, "wb") as fh:
             self.datasets = None
             torch.save(self, fh, pickle_protocol=4)
+        self.datasets = datasets
 
     @classmethod
     def load(cls, path, datasets):
