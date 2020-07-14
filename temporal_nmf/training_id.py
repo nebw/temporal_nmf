@@ -1,5 +1,6 @@
 import pathlib
 import pickle
+from typing import Union
 
 import numpy as np
 import pandas as pd
@@ -278,7 +279,7 @@ class TrainingWrapper:
 
         return combined_loss.data.cpu().item()
 
-    def save(self, path):
+    def save(self, path: Union[str, pathlib.Path]):
         datasets = self.datasets
         with open(path, "wb") as fh:
             self.datasets = None
@@ -286,9 +287,9 @@ class TrainingWrapper:
         self.datasets = datasets
 
     @classmethod
-    def load(cls, path, datasets):
+    def load(cls, path, datasets, map_location=None):
         with open(path, "rb") as fh:
-            wrapper = torch.load(fh)
+            wrapper = torch.load(fh, map_location=map_location)
             wrapper.datasets = datasets
 
             return wrapper
