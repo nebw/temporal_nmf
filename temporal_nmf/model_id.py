@@ -155,6 +155,10 @@ class TemporalNMF(nn.Module):
             None, :, None, None
         ].repeat(num_days, 1, batch_size, 1)
         timesteps = timesteps.pin_memory().to(self.get_device(), non_blocking=True)
+        timeoffsets = torch.linspace(0, 1, steps=self.num_timesteps)[None, :, None, None].repeat(
+            self.num_days, 1, batch_size, 1
+        )
+        ages = ages + timeoffsets
 
         offsetter_input = torch.cat((ages, torch.sin(timesteps), torch.cos(timesteps)), dim=-1)
 
