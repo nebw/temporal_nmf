@@ -136,7 +136,7 @@ class TemporalNMF(nn.Module):
         timeoffsets = torch.linspace(0, 1, steps=self.num_timesteps)[None, :, None, None].repeat(
             self.num_days, 1, batch_size, 1
         )
-        ages = ages + timeoffsets
+        ages = ages + timeoffsets / self.std_age
 
         age_emb_input = torch.cat((ages, torch.sin(timesteps), torch.cos(timesteps)), dim=-1)
 
@@ -158,7 +158,7 @@ class TemporalNMF(nn.Module):
         timeoffsets = torch.linspace(0, 1, steps=self.num_timesteps)[None, :, None, None].repeat(
             self.num_days, 1, batch_size, 1
         )
-        ages = ages + timeoffsets
+        ages = ages + timeoffsets / self.std_age
 
         offsetter_input = torch.cat((ages, torch.sin(timesteps), torch.cos(timesteps)), dim=-1)
 
