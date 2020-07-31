@@ -157,7 +157,7 @@ class TemporalNMF(nn.Module):
         timesteps = timesteps.pin_memory().to(self.get_device(), non_blocking=True)
         timeoffsets = (
             torch.linspace(0, 1, steps=self.num_timesteps)[None, :, None, None]
-            .repeat(self.num_days, 1, batch_size, 1)
+            .repeat(num_days, 1, batch_size, 1)
             .pin_memory()
             .to(self.get_device(), non_blocking=True)
         )
