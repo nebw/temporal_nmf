@@ -3,6 +3,10 @@ try:
 except ImportError:
     from distutils.core import setup
 
+import site
+import sys
+
+site.ENABLE_USER_SITE = "--user" in sys.argv[1:]
 
 setup(
     name="temporal_nmf",
