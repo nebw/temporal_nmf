@@ -130,9 +130,9 @@ class TemporalNMF(nn.Module):
         ages = (self.ages[:, idxs] - self.mean_age) / self.std_age
 
         ages = ages[:, None, :, None].repeat(1, self.num_timesteps, 1, 1)
-        timesteps = torch.linspace(0, 2 * np.pi, steps=self.num_timesteps)[
-            None, :, None, None
-        ].repeat(self.num_days, 1, batch_size, 1)
+        timesteps = torch.linspace(
+            0, 2 * np.pi - 2 * np.pi / self.num_timesteps, steps=self.num_timesteps
+        )[None, :, None, None].repeat(self.num_days, 1, batch_size, 1)
         timeoffsets = torch.linspace(0, 1, steps=self.num_timesteps)[None, :, None, None].repeat(
             self.num_days, 1, batch_size, 1
         )
@@ -151,9 +151,9 @@ class TemporalNMF(nn.Module):
         batch_size = ages.shape[1]
 
         ages = ages[:, None, :, None].repeat(1, self.num_timesteps, 1, 1)
-        timesteps = torch.linspace(0, 2 * np.pi, steps=self.num_timesteps)[
-            None, :, None, None
-        ].repeat(num_days, 1, batch_size, 1)
+        timesteps = torch.linspace(
+            0, 2 * np.pi - 2 * np.pi / self.num_timesteps, steps=self.num_timesteps
+        )[None, :, None, None].repeat(num_days, 1, batch_size, 1)
         timesteps = timesteps.pin_memory().to(self.get_device(), non_blocking=True)
         timeoffsets = torch.linspace(0, 1, steps=self.num_timesteps)[None, :, None, None].repeat(
             self.num_days, 1, batch_size, 1
