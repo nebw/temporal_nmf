@@ -202,7 +202,7 @@ class TemporalNMF(nn.Module):
     def pin_transfer(self, tensor):
         device = self.get_device()
         if str(device).startswith("cuda"):
-            tensor = tensor.pin_memory().to(device(), non_blocking=True)
+            tensor = tensor.pin_memory().to(device, non_blocking=True)
 
         return tensor
 
