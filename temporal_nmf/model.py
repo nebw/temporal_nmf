@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 import torch
+import tqdm.auto as tqdm
 from torch import nn
-from tqdm import trange
 
 
 def _default_age_embedder(num_hidden, num_factors):
@@ -97,8 +97,6 @@ class TemporalNMF(nn.Module):
         )
         nn.init.orthogonal_(self.embeddings.weight, gain=10)
 
-        self.daily_bias = nn.Parameter(torch.zeros(num_days, num_matrices))
-
         if symmetric:
             self.output_map = nn.Parameter(torch.ones(self.num_factors, num_matrices))
         else:
@@ -181,7 +179,7 @@ class TemporalNMF(nn.Module):
 
         return rec_mapped
 
-    def reconstruct_inputs(self, with_offsets=True):
+    def reconstruct_inputs(self, with_offsets=True, iterator=tqdm.range):
         with torch.no_grad():
             all_idxs = torch.LongTensor(list(range(self.num_entities)))
 
@@ -194,17 +192,8 @@ class TemporalNMF(nn.Module):
                 factors_by_emb = factors_by_age
 
             recs = []
-            for day in trange(self.num_days):
-                recs.append(
-                    (
-                        self.reconstruction(factors_by_emb[day][None, :, :])
-                        + self.daily_bias[day, None, None, :].repeat(
-                            self.num_entities, self.num_entities, 1
-                        )
-                    )
-                    .cpu()
-                    .half()
-                )
+            for day in iterator(self.num_days):
+                recs.append((self.reconstruction(factors_by_emb[day][None, :, :])).cpu().half())
 
             recs = torch.cat(recs, dim=0)
 
@@ -240,16 +229,12 @@ class TemporalNMF(nn.Module):
         ).mean()
 
     def forward(self, idxs):
-        batch_size = len(idxs)
-
-        daily_bias_reshaped = self.daily_bias[:, None, None, :].repeat(1, batch_size, batch_size, 1)
-
         factors_by_age = self.get_age_factors(idxs)
-        rec_by_age = self.reconstruction(factors_by_age) + daily_bias_reshaped
+        rec_by_age = self.reconstruction(factors_by_age)
 
         embs, factor_offsets = self.get_embedding_factor_offsets(idxs)
         factors_by_emb = factors_by_age + factor_offsets
-        rec_by_emb = self.reconstruction(factors_by_emb) + daily_bias_reshaped
+        rec_by_emb = self.reconstruction(factors_by_emb)
 
         return rec_by_age, rec_by_emb, factors_by_age, factors_by_emb, factor_offsets, embs
 
@@ -270,7 +255,14 @@ class TemporalNMF(nn.Module):
 
             while idx < self.num_entities:
                 batch_idxs = torch.arange(idx, min((idx + batch_size, self.num_entities)))
-                (_, _, _, factors_by_emb, _, _,) = self.forward(batch_idxs)
+                (
+                    _,
+                    _,
+                    _,
+                    factors_by_emb,
+                    _,
+                    _,
+                ) = self.forward(batch_idxs)
 
                 idx += batch_size
 
