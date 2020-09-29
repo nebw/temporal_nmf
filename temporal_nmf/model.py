@@ -121,9 +121,7 @@ class TemporalNMF(nn.Module):
         batch_size = len(idxs)
         ages = (self.ages[:, idxs] - self.mean_age) / self.std_age
 
-        factors_by_age = self.age_embedder(
-            ages.view(-1, 1).pin_memory().to(self.get_device(), non_blocking=True)
-        )
+        factors_by_age = self.age_embedder(self.pin_transfer(ages.view(-1, 1)))
         factors_by_age = factors_by_age.view(self.num_days, batch_size, self.num_factors)
 
         return factors_by_age
@@ -140,12 +138,10 @@ class TemporalNMF(nn.Module):
         return basis_functions
 
     def get_embedding_factor_offsets(self, idxs):
-        device = self.get_device()
-
         ages = (self.ages[:, idxs] - self.mean_age) / self.std_age
-        ages = ages[:, :, None].pin_memory().to(device, non_blocking=True)
+        ages = self.pin_transfer(ages[:, :, None])
 
-        embs = self.embeddings(idxs.pin_memory().to(device, non_blocking=True)).abs()
+        embs = self.embeddings(self.pin_transfer(idxs)).abs()
 
         basis_functions = self.get_basis_functions(ages)
         offsets = basis_functions * embs[None, :, :, None].repeat(self.num_days, 1, 1, 1)
@@ -198,6 +194,13 @@ class TemporalNMF(nn.Module):
             recs = torch.cat(recs, dim=0)
 
         return recs
+
+    def pin_transfer(self, tensor):
+        device = self.get_device()
+        if str(device).startswith("cuda"):
+            tensor = tensor.pin_memory().to(device(), non_blocking=True)
+
+        return tensor
 
     @staticmethod
     def nonnegativity_loss(factors_by_age, factors_by_emb):
