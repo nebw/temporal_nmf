@@ -175,7 +175,7 @@ class TemporalNMF(nn.Module):
 
         return rec_mapped
 
-    def reconstruct_inputs(self, with_offsets=True, iterator=tqdm.range):
+    def reconstruct_inputs(self, with_offsets=True, iterator=tqdm.trange):
         with torch.no_grad():
             all_idxs = torch.LongTensor(list(range(self.num_entities)))
 
