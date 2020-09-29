@@ -118,7 +118,7 @@ class TrainingWrapper:
             num_embeddings, num_hidden, num_factors
         ).to(device)
 
-        self.loss = nn.SmoothL1Loss(reduction="none").to(self.device)
+        self.loss = nn.MSELoss(reduction="none").to(self.device)
         self.disc_loss = nn.CrossEntropyLoss(reduction="none").to(self.device)
 
         self.models = []
