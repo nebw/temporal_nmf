@@ -91,7 +91,13 @@ class DataWrapper:
 
 class TrainingWrapper:
     def __init__(
-        self, datasets, device, lambdas, num_hidden=32, num_embeddings=16, num_factors=8,
+        self,
+        datasets,
+        device,
+        lambdas,
+        num_hidden=32,
+        num_embeddings=16,
+        num_factors=8,
     ):
         self.datasets = datasets
         self.device = device
@@ -144,7 +150,8 @@ class TrainingWrapper:
             model.std_age = self.std_age.clone()
 
         self.optim = torch.optim.Adam(
-            set().union(*tuple(map(lambda m: m.get_model_parameters(), self.models))), amsgrad=True,
+            set().union(*tuple(map(lambda m: m.get_model_parameters(), self.models))),
+            amsgrad=True,
         )
         self.disc_optim = torch.optim.Adam(self.discriminator.parameters(), amsgrad=True)
 
@@ -155,7 +162,11 @@ class TrainingWrapper:
 
         batch_targets = torch.from_numpy(
             data.imls_log_daily[
-                np.ix_(list(range(data.num_days)), list(batch_idxs), list(batch_idxs),)
+                np.ix_(
+                    list(range(data.num_days)),
+                    list(batch_idxs),
+                    list(batch_idxs),
+                )
             ]
         )
         batch_targets = batch_targets.pin_memory().to(self.device, non_blocking=True).float()
@@ -178,9 +189,14 @@ class TrainingWrapper:
             is_valid = (is_valid[:, :, None] * is_valid[:, None, :])[:, :, :, None].float()
             loss_mask *= is_valid
 
-        (rec_by_age, rec_by_emb, factors_by_age, factors_by_emb, factor_offsets, embs,) = model(
-            batch_idxs
-        )
+        (
+            rec_by_age,
+            rec_by_emb,
+            factors_by_age,
+            factors_by_emb,
+            factor_offsets,
+            embs,
+        ) = model(batch_idxs)
 
         batch_losses = {
             "reconstruction_by_age": (self.loss(batch_targets, rec_by_age) * loss_mask).sum()
