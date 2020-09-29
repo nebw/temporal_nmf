@@ -206,7 +206,7 @@ class TrainingWrapper:
             "factor_l1": (model.factor_l1_loss(factors_by_age)),
             "factor_nonnegativity": model.nonnegativity_loss(factors_by_age, factors_by_emb),
             "basis_function_l1": model.basis_function_l1_loss(),
-            "embedding_sparsity": model.embedding_sparsity_loss() * model.embedding_l1_loss(),
+            "embedding_sparsity": model.embedding_l1_loss(),
         }
 
         batch_losses = {f"{k}_{data.dataset_name}": v for k, v in batch_losses.items()}
