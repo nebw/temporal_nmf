@@ -61,7 +61,10 @@ def get_proximity_interactions(
 
     with psycopg2.connect(connect_str) as conn:
         interaction_df = pd.read_sql_query(
-            query, conn, params=(ts_start, ts_end, ts_start, ts_end, max_dist), coerce_float=False,
+            query,
+            conn,
+            params=(ts_start, ts_end, ts_start, ts_end, max_dist),
+            coerce_float=False,
         )
 
     return interaction_df
