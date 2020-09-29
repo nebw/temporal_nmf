@@ -229,11 +229,7 @@ class TemporalNMF(nn.Module):
         return torch.mean((self.embeddings.weight).abs().sum(dim=-1))
 
     def embedding_sparsity_loss(self):
-        return (
-            1
-            - self.embeddings.weight.abs().max(dim=1).values
-            / self.embeddings.weight.abs().sum(dim=1)
-        ).mean()
+        return self.embedding_l1_loss()
 
     def forward(self, idxs):
         factors_by_age = self.get_age_factors(idxs)
