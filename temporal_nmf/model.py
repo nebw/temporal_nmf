@@ -62,6 +62,7 @@ class TemporalNMF(nn.Module):
         age_embedder=None,
         discriminator=None,
         offsetter=None,
+        nonnegative=True,
         max_norm_embedding=1,
     ):
         super().__init__()
@@ -91,6 +92,8 @@ class TemporalNMF(nn.Module):
             if offsetter is None
             else offsetter
         )
+
+        self.nonnegative = nonnegative
 
         self.embeddings = nn.Embedding(
             num_entities, num_embeddings, max_norm=max_norm_embedding, norm_type=1
@@ -158,7 +161,8 @@ class TemporalNMF(nn.Module):
         output_map_reparam = nn.functional.softplus(self.output_map)
         output_map_reparam = output_map_reparam / output_map_reparam.sum(dim=0) * self.num_factors
 
-        factors = nn.functional.relu(factors)
+        if self.nonnegative:
+            factors = nn.functional.relu(factors)
 
         if self.symmetric:
             rec_unmapped = factors[:, :, None] * factors[:, None, :]

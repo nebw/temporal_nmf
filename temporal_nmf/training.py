@@ -136,6 +136,7 @@ class TrainingWrapper:
                     age_embedder=self.age_embedder,
                     discriminator=self.discriminator,
                     offsetter=self.offsetter,
+                    nonnegative=lambdas["factor_nonnegativity"] > 0,
                 ).to(device)
             )
 
