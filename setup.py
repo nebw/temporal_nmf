@@ -11,6 +11,7 @@ setup(
     entry_points={
         "console_scripts": [
             "tnmf_train = temporal_nmf.scripts.train:train",
+            "tnmf_synthetic = temporal_nmf.scripts.synth:synth",
         ]
     },
     author="Benjamin Wild",
