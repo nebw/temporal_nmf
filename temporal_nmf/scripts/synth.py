@@ -36,7 +36,7 @@ from temporal_nmf.model import TemporalNMF
 @click.option("--lambda_basis_function_l1", default=0.01)
 @click.option("--lambda_embedding_sparsity", default=0.1)
 @click.option("--lambda_factor_nonnegativity", default=1)
-@click.option("--lambda_adversarial", default=0.0)
+@click.option("--lambda_adversarial", default=0.1)
 @click.option("--min_noise", default=0)
 @click.option("--max_noise", default=50)
 @click.option("--num_noise_samples", default=50)
