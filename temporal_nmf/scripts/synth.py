@@ -157,7 +157,7 @@ def synth(output_path, **kwargs):
 
         loss_hist = []
 
-        for i in tqdm.trange(num_batches):
+        for i in range(num_batches):
             optim.zero_grad()
             disc_optim.zero_grad()
 
@@ -229,6 +229,38 @@ def synth(output_path, **kwargs):
             disc_optim.step()
 
             loss_hist.append({k: v.detach().cpu().item() for k, v in batch_losses_scaled.items()})
+
+            if i % 1000 == 0:
+                factor_df = model.get_factor_df(
+                    ids=np.arange(num_individuals),
+                    embedding_dim=model.num_embeddings,
+                    valid_ages=individual_ages >= 0,
+                )
+                factor_df.age = factor_df.age.astype(int)
+                factor_df.day = factor_df.day.astype(int)
+                factor_df.bee_id = factor_df.bee_id.astype(int)
+
+                truth_df = pd.DataFrame(
+                    np.concatenate(
+                        (np.arange(num_individuals)[:, None], group_assigments[:, None]), axis=1
+                    ),
+                    columns=("bee_id", "group"),
+                )
+                factor_df = factor_df.merge(truth_df)
+
+                embeddings = model.embeddings.weight.abs().argmax(axis=1).cpu().data.numpy()
+                factor_df = factor_df.merge(
+                    pd.DataFrame(
+                        np.stack((np.arange(num_individuals), embeddings)).T,
+                        columns=(("bee_id", "group_assigned")),
+                    )
+                )
+                assignment_df = factor_df.drop_duplicates("bee_id")
+                ami = sklearn.metrics.adjusted_mutual_info_score(
+                    assignment_df.group, assignment_df.group_assigned
+                )
+
+                print(ami)
 
         return model
 
