@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional
 import tqdm.auto as tqdm
 from torch import nn
 
@@ -120,12 +121,24 @@ class TemporalNMF(nn.Module):
     def get_discriminator_parameters(self):
         return [params for name, params in self.named_parameters() if "discriminator" in name]
 
-    def get_age_factors(self, idxs):
-        batch_size = len(idxs)
-        ages = (self.ages[:, idxs] - self.mean_age) / self.std_age
+    def get_age_factors(self, temporal_idxs, entity_idxs):
+        num_entities = len(entity_idxs)
+        num_timesteps = len(temporal_idxs)
+
+        ages = (self.ages[temporal_idxs][:, entity_idxs] - self.mean_age) / self.std_age
+
+        # use timesteps as second input
+        """
+        timesteps = temporal_idxs[:, None].repeat(1, num_entities)
+
+        ages = torch.cat((ages[:, :, None], timesteps[:, :, None]), dim=-1)
+        ages = self.pin_transfer(ages)
+
+        factors_by_age = self.age_embedder(ages)
+        """
 
         factors_by_age = self.age_embedder(self.pin_transfer(ages.view(-1, 1)))
-        factors_by_age = factors_by_age.view(self.num_days, batch_size, self.num_factors)
+        factors_by_age = factors_by_age.view(num_timesteps, num_entities, self.num_factors)
 
         return factors_by_age
 
@@ -140,14 +153,26 @@ class TemporalNMF(nn.Module):
 
         return basis_functions
 
-    def get_embedding_factor_offsets(self, idxs):
-        ages = (self.ages[:, idxs] - self.mean_age) / self.std_age
+    def get_embedding_factor_offsets(self, temporal_idxs, entity_idxs):
+        num_timesteps = len(temporal_idxs)
+
+        ages = (self.ages[temporal_idxs][:, entity_idxs] - self.mean_age) / self.std_age
+
+        # use timesteps as second input
+        """
+        num_entities = len(entity_idxs)
+        timesteps = temporal_idxs[:, None].repeat(1, num_entities)
+
+        ages = torch.cat((ages[:, :, None], timesteps[:, :, None]), dim=-1)
+        ages = self.pin_transfer(ages)
+        """
+
         ages = self.pin_transfer(ages[:, :, None])
 
-        embs = self.embeddings(self.pin_transfer(idxs)).abs()
+        embs = self.embeddings(self.pin_transfer(entity_idxs)).abs()
 
         basis_functions = self.get_basis_functions(ages)
-        offsets = basis_functions * embs[None, :, :, None].repeat(self.num_days, 1, 1, 1)
+        offsets = basis_functions * embs[None, :, :, None].repeat(num_timesteps, 1, 1, 1)
         offsets = offsets.sum(dim=-2)
 
         return embs, offsets
@@ -158,35 +183,30 @@ class TemporalNMF(nn.Module):
         return logits
 
     def reconstruction(self, factors):
-        output_map_reparam = nn.functional.softplus(self.output_map)
-        output_map_reparam = output_map_reparam / output_map_reparam.sum(dim=0) * self.num_factors
-
         if self.nonnegative:
-            factors = nn.functional.relu(factors)
+            factors = torch.nn.functional.relu(factors)
 
         if self.symmetric:
-            rec_unmapped = factors[:, :, None] * factors[:, None, :]
+            recon = factors[:, :, None] * factors[:, None, :]
         else:
-            rec_unmapped = (
+            recon = (
                 factors[:, : self.num_factors // 2, None]
                 * factors[:, None, self.num_factors // 2 :]
             )
 
-        rec_mapped = (
-            rec_unmapped[:, :, :, None, :]
-            @ output_map_reparam[None, None, None, :, :].to(rec_unmapped.device)
-        )[:, :, :, 0, :]
-
-        return rec_mapped
+        return recon.sum(dim=-1)[..., None]
 
     def reconstruct_inputs(self, with_offsets=True, iterator=tqdm.trange):
         with torch.no_grad():
-            all_idxs = torch.LongTensor(list(range(self.num_entities)))
+            all_temporal_idxs = torch.LongTensor(list(range(self.num_days)))
+            all_entity_idxs = torch.LongTensor(list(range(self.num_entities)))
 
-            factors_by_age = self.get_age_factors(all_idxs)
+            factors_by_age = self.get_age_factors(all_temporal_idxs, all_entity_idxs)
 
             if with_offsets:
-                _, factor_offsets = self.get_embedding_factor_offsets(all_idxs)
+                _, factor_offsets = self.get_embedding_factor_offsets(
+                    all_temporal_idxs, all_entity_idxs
+                )
                 factors_by_emb = factors_by_age + factor_offsets
             else:
                 factors_by_emb = factors_by_age
@@ -209,7 +229,8 @@ class TemporalNMF(nn.Module):
     @staticmethod
     def nonnegativity_loss(factors_by_age, factors_by_emb):
         return (
-            nn.functional.relu(-factors_by_emb).mean() + nn.functional.relu(-factors_by_age).mean()
+            torch.nn.functional.relu(-factors_by_emb).mean()
+            + torch.nn.functional.relu(-factors_by_age).mean()
         )
 
     @staticmethod
@@ -231,11 +252,11 @@ class TemporalNMF(nn.Module):
     def embedding_sparsity_loss(self):
         return self.embedding_l1_loss()
 
-    def forward(self, idxs):
-        factors_by_age = self.get_age_factors(idxs)
+    def forward(self, temporal_idxs, entity_idxs):
+        factors_by_age = self.get_age_factors(temporal_idxs, entity_idxs)
         rec_by_age = self.reconstruction(factors_by_age)
 
-        embs, factor_offsets = self.get_embedding_factor_offsets(idxs)
+        embs, factor_offsets = self.get_embedding_factor_offsets(temporal_idxs, entity_idxs)
         factors_by_emb = factors_by_age + factor_offsets
         rec_by_emb = self.reconstruction(factors_by_emb)
 
@@ -256,6 +277,7 @@ class TemporalNMF(nn.Module):
             idx = 0
             dfs = []
 
+            all_temporal_idxs = torch.LongTensor(list(range(self.num_days)))
             while idx < self.num_entities:
                 batch_idxs = torch.arange(idx, min((idx + batch_size, self.num_entities)))
                 (
@@ -265,7 +287,7 @@ class TemporalNMF(nn.Module):
                     factors_by_emb,
                     _,
                     _,
-                ) = self.forward(batch_idxs)
+                ) = self.forward(all_temporal_idxs, batch_idxs)
 
                 idx += batch_size
 

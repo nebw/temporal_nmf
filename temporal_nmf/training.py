@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import sparse
 import torch
+import torch.optim
 import tqdm.auto as tqdm
 import zstandard
 from torch import nn
@@ -158,31 +159,40 @@ class TrainingWrapper:
 
         self.loss_hist = []
 
-    def subbatch(self, data, model, batch_size, label_offset, use_valid_ages=False):
-        batch_idxs = torch.randint(0, data.num_entities, (batch_size,))
+    def subbatch(
+        self,
+        data,
+        model,
+        batch_num_timesteps,
+        batch_num_entities,
+        label_offset,
+        use_valid_ages=False,
+    ):
+        timestep_idxs = torch.randint(0, data.num_days, (batch_num_timesteps,))
+        entity_idxs = torch.randint(0, data.num_entities, (batch_num_entities,))
 
         batch_targets = torch.from_numpy(
             data.imls_log_daily[
                 np.ix_(
-                    list(range(data.num_days)),
-                    list(batch_idxs),
-                    list(batch_idxs),
+                    list(timestep_idxs),
+                    list(entity_idxs),
+                    list(entity_idxs),
                 )
             ]
         )
         batch_targets = batch_targets.pin_memory().to(self.device, non_blocking=True).float()
 
-        disc_targets = torch.from_numpy(data.labels[batch_idxs] + label_offset)
+        disc_targets = torch.from_numpy(data.labels[entity_idxs] + label_offset)
         disc_targets = disc_targets.pin_memory().to(self.device, non_blocking=True)
 
-        loss_mask = 1 - torch.eye(batch_size)[None, :, :, None].repeat(
-            data.num_days, 1, 1, data.num_matrices
+        loss_mask = 1 - torch.eye(batch_num_entities)[None, :, :, None].repeat(
+            batch_num_timesteps, 1, 1, data.num_matrices
         )
         loss_mask = loss_mask.pin_memory().to(self.device, non_blocking=True)
 
         if use_valid_ages:
-            valid_ages = data.valid_ages[:, batch_idxs]
-            is_valid = valid_ages[:, None, :] * valid_ages[:, :, None]
+            valid_ages = data.valid_ages[:, entity_idxs]
+            is_valid = valid_ages[timestep_idxs, None, :] * valid_ages[timestep_idxs, :, None]
             is_valid = torch.from_numpy(is_valid).pin_memory().to(self.device, non_blocking=True)
             loss_mask *= is_valid[:, :, :, None]
         else:
@@ -197,7 +207,7 @@ class TrainingWrapper:
             factors_by_emb,
             factor_offsets,
             embs,
-        ) = model(batch_idxs)
+        ) = model(timestep_idxs, entity_idxs)
 
         batch_losses = {
             "reconstruction_by_age": (self.loss(batch_targets, rec_by_age) * loss_mask).sum()
@@ -214,7 +224,7 @@ class TrainingWrapper:
 
         return batch_losses, embs, disc_targets
 
-    def batch(self, batch_size):
+    def batch(self, batch_num_timesteps, batch_num_entities):
         self.optim.zero_grad()
         self.disc_optim.zero_grad()
 
@@ -224,7 +234,7 @@ class TrainingWrapper:
         batch_disc_targets = []
         for (data, model) in zip(self.datasets, self.models):
             subbatch_losses, embs, disc_targets = self.subbatch(
-                data, model, batch_size, label_offset
+                data, model, batch_num_timesteps, batch_num_entities, label_offset
             )
             batch_losses.update(subbatch_losses)
             label_offset += data.num_classes
@@ -240,9 +250,9 @@ class TrainingWrapper:
         batch_idx_from = 0
         for data in self.datasets:
             batch_losses[f"adversarial_{data.dataset_name}"] = -disc_loss[
-                batch_idx_from : batch_idx_from + batch_size
+                batch_idx_from : batch_idx_from + batch_num_entities
             ].mean()
-            batch_idx_from += batch_size
+            batch_idx_from += batch_num_entities
 
         batch_losses_scaled = []
         for loss_name, loss in batch_losses.items():

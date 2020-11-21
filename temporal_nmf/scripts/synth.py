@@ -162,6 +162,7 @@ def synth(output_path, **kwargs):
             disc_optim.zero_grad()
 
             batch_idxs = torch.randint(0, num_individuals, (batch_size,))
+            temporal_idxs = torch.LongTensor(list(range(num_days))).to(device)
 
             batch_targets = torch.from_numpy(
                 interactions[
@@ -193,7 +194,7 @@ def synth(output_path, **kwargs):
                 factors_by_emb,
                 factor_offsets,
                 embs,
-            ) = model(batch_idxs)
+            ) = model(temporal_idxs, batch_idxs)
 
             disc_logits = model.discriminator(embs)
             batch_disc_loss = disc_loss(disc_logits, disc_targets)
