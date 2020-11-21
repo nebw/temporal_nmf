@@ -40,7 +40,14 @@ def train(base_path, output_path, batch_size, device, num_batches, **kwargs):
     data16 = DataWrapper(base_path, "bn16", datetime.datetime(2016, 7, 23))
     data19 = DataWrapper(base_path, "bn19", datetime.datetime(2019, 7, 25))
 
-    trainer = TrainingWrapper((data16, data19), device, lambdas)
+    trainer = TrainingWrapper(
+        (data16, data19),
+        device,
+        lambdas,
+        num_hidden=kwargs["num_hidden"],
+        num_embeddings=kwargs["num_embeddings"],
+        num_factors=kwargs["num_factors"],
+    )
 
     for i in tqdm.trange(len(trainer.loss_hist), num_batches):
         trainer.batch(batch_size)
