@@ -12,8 +12,10 @@ import sklearn
 import sklearn.cluster
 import sklearn.metrics
 import torch
+import torch.nn
+import torch.nn.functional
+import torch.optim
 import tqdm.auto as tqdm
-from torch import nn
 
 import temporal_nmf
 from temporal_nmf.model import TemporalNMF
@@ -154,8 +156,8 @@ def synth(output_path, **kwargs):
 
         optim = torch.optim.Adam(model.get_model_parameters(), amsgrad=True)
         disc_optim = torch.optim.Adam(model.discriminator.parameters(), amsgrad=True)
-        recon_loss = nn.MSELoss(reduction="none").to(device)
-        disc_loss = nn.CrossEntropyLoss().to(device)
+        recon_loss = torch.nn.MSELoss(reduction="none").to(device)
+        disc_loss = torch.nn.CrossEntropyLoss().to(device)
 
         loss_hist = []
 
@@ -271,10 +273,10 @@ def synth(output_path, **kwargs):
         daily_losses = []
         daily_factors = []
 
-        loss = nn.MSELoss(reduction="none").to(device)
+        loss = torch.nn.MSELoss(reduction="none").to(device)
 
         for day in tqdm.trange(num_days):
-            factors = nn.Parameter(
+            factors = torch.nn.Parameter(
                 torch.randn(num_individuals, num_factors * 2, device=device).detach() - 1
             )
             optim = torch.optim.LBFGS([factors], lr=0.1)
@@ -287,7 +289,7 @@ def synth(output_path, **kwargs):
             def closure():
                 optim.zero_grad()
 
-                valid_factors = nn.functional.softplus(factors[is_valid])
+                valid_factors = torch.nn.functional.softplus(factors[is_valid])
                 rec = valid_factors @ valid_factors.transpose(1, 0)
 
                 epoch_loss = loss(rec, target)
@@ -300,7 +302,7 @@ def synth(output_path, **kwargs):
                 optim.step(closure)
 
             daily_losses.append(closure())
-            daily_factors.append(nn.functional.softplus(factors).data.cpu().numpy())
+            daily_factors.append(torch.nn.functional.softplus(factors).data.cpu().numpy())
 
         valid_inds = individual_ages >= 0
         dfs = []
