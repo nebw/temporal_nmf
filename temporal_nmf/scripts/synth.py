@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import itertools
 import uuid
 
 import click
@@ -8,6 +9,7 @@ import pandas as pd
 import scipy
 import scipy.ndimage
 import sklearn
+import sklearn.cluster
 import sklearn.metrics
 import torch
 import tqdm.auto as tqdm
@@ -17,7 +19,7 @@ import temporal_nmf
 from temporal_nmf.model import TemporalNMF
 
 
-@click.command()
+@click.command(context_settings=dict(show_default=True))
 @click.argument("output_path")
 @click.option("--batch_size", default=16)
 @click.option("--num_batches", default=100000)
@@ -142,7 +144,7 @@ def synth(output_path, **kwargs):
         model = TemporalNMF(
             num_individuals,
             num_groups * 4,
-            num_factors * 4,
+            num_factors * 2,
             32,
             num_days,
             1,
@@ -261,9 +263,109 @@ def synth(output_path, **kwargs):
                     assignment_df.group, assignment_df.group_assigned
                 )
 
-                print(ami)
+                print(ami, flush=True)
 
         return model
+
+    def get_baseline_factors():
+        daily_losses = []
+        daily_factors = []
+
+        loss = nn.MSELoss(reduction="none").to(device)
+
+        for day in tqdm.trange(num_days):
+            factors = nn.Parameter(
+                torch.randn(num_individuals, num_factors * 2, device=device).detach() - 1
+            )
+            optim = torch.optim.LBFGS([factors], lr=0.1)
+
+            is_valid = torch.from_numpy(individual_ages[day] >= 0).to(device, non_blocking=True)
+            target = torch.from_numpy(interactions[day]).to(device)[:, :, 0].float()
+            target = target[is_valid][:, is_valid]
+            loss_mask = (1 - torch.eye(sum(is_valid))).to(device)[:, :, None]
+
+            def closure():
+                optim.zero_grad()
+
+                valid_factors = nn.functional.softplus(factors[is_valid])
+                rec = valid_factors @ valid_factors.transpose(1, 0)
+
+                epoch_loss = loss(rec, target)
+                epoch_loss = (epoch_loss * loss_mask).sum() / loss_mask.sum()
+                epoch_loss.backward()
+
+                return epoch_loss
+
+            for _ in range(20):
+                optim.step(closure)
+
+            daily_losses.append(closure())
+            daily_factors.append(nn.functional.softplus(factors).data.cpu().numpy())
+
+        valid_inds = individual_ages >= 0
+        dfs = []
+        for day in range(num_days):
+            valid_day = valid_inds[day]
+            ids = np.argwhere(valid_day).flatten()
+
+            factors = daily_factors[day][valid_day]
+            columns = ["day", "bee_id"] + [f"f_{f}" for f in range(num_factors * 2)]
+            factor_df = pd.DataFrame(
+                np.concatenate(
+                    (
+                        np.array([day for _ in range(len(ids))])[:, None],
+                        ids[:, None],
+                        factors,
+                    ),
+                    axis=-1,
+                ),
+                columns=columns,
+            )
+            dfs.append(factor_df)
+
+        factor_df = pd.concat(dfs)
+
+        feature_names = factor_cols
+        reordered_factor_dfs = []
+        unscaled_features = []
+
+        for day in range(num_days):
+            day_idxs = factor_df.day == day
+            day_idxs_previous = factor_df.day == day - 1
+            bee_ids = list(factor_df[day_idxs].bee_id)
+            bee_ids_previous = list(factor_df[day_idxs_previous].bee_id)
+
+            factor_df_day = factor_df[day_idxs].copy()
+
+            if day == 0:
+                features_unscaled = factor_df[day_idxs][feature_names].values
+                unscaled_features.append(features_unscaled)
+            else:
+                factors_today_bothalive = factor_df_day[
+                    factor_df_day.bee_id.isin(bee_ids_previous)
+                ][feature_names].values
+                factors_previous_bothalive = unscaled_features[-1][
+                    [bid in bee_ids for bid in bee_ids_previous]
+                ]
+
+                permutation_mse = []
+                for order in list(itertools.permutations(range(num_factors * 2), num_factors * 2)):
+                    features_reordered = factors_today_bothalive[:, order]
+                    permutation_mse.append(
+                        np.sqrt(np.mean((features_reordered - factors_previous_bothalive) ** 2))
+                    )
+
+                best_order = list(itertools.permutations(range(num_factors * 2), num_factors * 2))[
+                    np.argmin(permutation_mse)
+                ]
+                unscaled_features.append(factor_df_day[feature_names].values[:, best_order])
+                factor_df_day[feature_names] = factor_df_day[feature_names].values[:, best_order]
+
+            reordered_factor_dfs.append(factor_df_day)
+
+        reordered_factor_df = pd.concat(reordered_factor_dfs)
+
+        return reordered_factor_df
 
     mean_trajectory, offsets, group_trajectories = generate_trajectories()
     group_assigments = np.random.choice(num_groups, num_individuals)
@@ -292,6 +394,20 @@ def synth(output_path, **kwargs):
         )
         factor_df = factor_df.merge(truth_df)
 
+        truth_df = []
+        for individual in range(num_individuals):
+            df = pd.DataFrame(
+                individual_factors[:, individual], columns=[f"ft_{ft}" for ft in range(num_factors)]
+            ).reset_index()
+            df.rename({"index": "day"}, inplace=True, axis=1)
+            df["bee_id"] = individual
+            truth_df.append(df)
+        truth_df = pd.concat(truth_df)
+        factor_df = factor_df.merge(truth_df)
+
+        factor_cols = [c for c in factor_df.columns if c.startswith("f_")]
+        truth_factor_cols = [c for c in factor_df.columns if c.startswith("ft_")]
+
         embeddings = model.embeddings.weight.abs().argmax(axis=1).cpu().data.numpy()
         factor_df = factor_df.merge(
             pd.DataFrame(
@@ -304,6 +420,14 @@ def synth(output_path, **kwargs):
             assignment_df.group, assignment_df.group_assigned
         )
 
+        factors = factor_df[factor_cols].values
+        true_factors = factor_df[truth_factor_cols].values
+        permutation_mses = []
+        for order in itertools.permutations(range(len(factor_cols)), num_factors):
+            factors_reordered = factors[:, order]
+            permutation_mses.append(np.mean((factors_reordered - true_factors) ** 2))
+        factor_mse = np.min(permutation_mses)
+
         data = (
             mean_trajectory,
             offsets,
@@ -315,7 +439,56 @@ def synth(output_path, **kwargs):
             individual_factors,
             individual_ages,
         )
-        results.append((noise_std, data, model, factor_df, ami))
+
+        reordered_factor_df = get_baseline_factors()
+
+        truth_df = []
+        for individual in range(num_individuals):
+            df = pd.DataFrame(
+                individual_factors[:, individual], columns=[f"ft_{ft}" for ft in range(num_factors)]
+            ).reset_index()
+            df.rename({"index": "day"}, inplace=True, axis=1)
+            df["bee_id"] = individual
+            truth_df.append(df)
+        truth_df = pd.concat(truth_df)
+
+        reordered_factor_df = reordered_factor_df.merge(truth_df)
+
+        truth_df = pd.DataFrame(
+            np.concatenate(
+                (np.arange(num_individuals)[:, None], group_assigments[:, None]),
+                axis=1,
+            ),
+            columns=("bee_id", "group"),
+        )
+        reordered_factor_df = reordered_factor_df.merge(truth_df)
+
+        factors = reordered_factor_df[factor_cols].values
+        true_factors = reordered_factor_df[truth_factor_cols].values
+        permutation_mses = []
+        for order in itertools.permutations(range(len(factor_cols)), num_factors):
+            factors_reordered = factors[:, order]
+            permutation_mses.append(np.nanmean((factors_reordered - true_factors) ** 2))
+        baseline_factor_mse = np.min(permutation_mses)
+
+        X = reordered_factor_df[["bee_id"] + factor_cols].groupby("bee_id").mean().values
+        X_clusters = sklearn.cluster.KMeans(n_clusters=num_groups * 4).fit_predict(X)
+        baseline_ami = sklearn.metrics.adjusted_mutual_info_score(truth_df.group, X_clusters)
+
+        results.append(
+            (
+                noise_std,
+                data,
+                model,
+                factor_df,
+                ami,
+                factor_mse,
+                baseline_ami,
+                baseline_factor_mse,
+                config,
+            )
+        )
+        print((ami, factor_mse, baseline_ami, baseline_factor_mse))
 
     torch.save((data, results), f"{output_path}/{str(uuid.uuid4())}.pt")
 
