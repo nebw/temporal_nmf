@@ -14,7 +14,8 @@ from temporal_nmf.training import DataWrapper, TrainingWrapper
 @click.command()
 @click.argument("base_path", type=click.Path(exists=True))
 @click.argument("output_path")
-@click.option("--batch_size", default=256)
+@click.option("--batch_size_timesteps", default=8)
+@click.option("--batch_size_entities", default=256)
 @click.option("--device", default="cuda:0")
 @click.option("--num_batches", default=50000)
 @click.option("--num_hidden", default=32)
@@ -25,7 +26,9 @@ from temporal_nmf.training import DataWrapper, TrainingWrapper
 @click.option("--lambda_embedding_sparsity", default=0.1)
 @click.option("--lambda_factor_nonnegativity", default=1)
 @click.option("--lambda_adversarial", default=0.1)
-def train(base_path, output_path, batch_size, device, num_batches, **kwargs):
+def train(
+    base_path, output_path, batch_size_timesteps, batch_size_entities, device, num_batches, **kwargs
+):
     pd.set_option("display.float_format", lambda x: "%.4f" % x)
 
     lambdas = {
@@ -50,7 +53,7 @@ def train(base_path, output_path, batch_size, device, num_batches, **kwargs):
     )
 
     for i in tqdm.trange(len(trainer.loss_hist), num_batches):
-        trainer.batch(batch_size)
+        trainer.batch(batch_size_timesteps, batch_size_entities)
 
     trainer.save(output_path)
 
