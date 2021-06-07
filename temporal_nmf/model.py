@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional
 import tqdm.auto as tqdm
 from torch import nn
-import torch.nn.functional
 
 
 def _default_age_embedder(num_hidden, num_factors):
@@ -127,6 +127,16 @@ class TemporalNMF(nn.Module):
 
         ages = (self.ages[temporal_idxs][:, entity_idxs] - self.mean_age) / self.std_age
 
+        # use timesteps as second input
+        """
+        timesteps = temporal_idxs[:, None].repeat(1, num_entities)
+
+        ages = torch.cat((ages[:, :, None], timesteps[:, :, None]), dim=-1)
+        ages = self.pin_transfer(ages)
+
+        factors_by_age = self.age_embedder(ages)
+        """
+
         factors_by_age = self.age_embedder(self.pin_transfer(ages.view(-1, 1)))
         factors_by_age = factors_by_age.view(num_timesteps, num_entities, self.num_factors)
 
@@ -147,6 +157,16 @@ class TemporalNMF(nn.Module):
         num_timesteps = len(temporal_idxs)
 
         ages = (self.ages[temporal_idxs][:, entity_idxs] - self.mean_age) / self.std_age
+
+        # use timesteps as second input
+        """
+        num_entities = len(entity_idxs)
+        timesteps = temporal_idxs[:, None].repeat(1, num_entities)
+
+        ages = torch.cat((ages[:, :, None], timesteps[:, :, None]), dim=-1)
+        ages = self.pin_transfer(ages)
+        """
+
         ages = self.pin_transfer(ages[:, :, None])
 
         embs = self.embeddings(self.pin_transfer(entity_idxs)).abs()
