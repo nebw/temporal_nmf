@@ -53,15 +53,15 @@ def load_circadian_df(curta_scratch_path):
             add_dict(bee_data)
             circadian_df.append(bee_row)
 
-    circadian_df = pandas.DataFrame(circadian_df)
+    circadian_df = pd.DataFrame(circadian_df)
     circadian_df.describe()
     circadian_df.subsample.fillna(0, inplace=True)
     circadian_df = circadian_df[circadian_df.date < datetime.datetime(2016, 9, 1, tzinfo=pytz.UTC)]
     circadian_df["is_good_fit"] = (circadian_df.goodness_of_fit > 0.1).astype(np.float)
     circadian_df["is_circadian"] = (circadian_df.p_value < 0.05).astype(np.float)
     circadian_df["well_tested_circadianess"] = circadian_df.is_circadian * circadian_df.is_good_fit
-    circadian_df = circadian_df[~pandas.isnull(circadian_df.amplitude)]
-    circadian_df = circadian_df[~pandas.isnull(circadian_df.r_squared)]
+    circadian_df = circadian_df[~pd.isnull(circadian_df.amplitude)]
+    circadian_df = circadian_df[~pd.isnull(circadian_df.r_squared)]
     circadian_df.bee_id = circadian_df.bee_id.astype(np.uint32)
     circadian_df.amplitude = circadian_df.amplitude.astype(np.float32)
     circadian_df.r_squared = circadian_df.r_squared.astype(np.float32)

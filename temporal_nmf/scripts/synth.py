@@ -260,7 +260,7 @@ def synth(output_path, **kwargs):
                     assignment_df.group, assignment_df.group_assigned
                 )
 
-                print(ami)
+                print(ami, flush=True)
 
         return model
 
