@@ -107,9 +107,9 @@ def load_basics_df(path):
 def evaluate_regression(
     combined, model_name, target_vars=None, id_subset_score=None, day_subset_score=None, n_models=1
 ):
-    from sklearn.preprocessing import RobustScaler, OneHotEncoder
-    from sklearn import metrics
     import statsmodels.api as sm
+    from sklearn import metrics
+    from sklearn.preprocessing import OneHotEncoder, RobustScaler
 
     if target_vars is None:
         target_vars = (
@@ -192,9 +192,9 @@ def evaluate_regression(
 
 
 def evaluate_auc_over_time(combined, model_name, target_var="is_circadian"):
-    from sklearn.preprocessing import RobustScaler, OneHotEncoder
-    from sklearn import metrics
     import statsmodels.api as sm
+    from sklearn import metrics
+    from sklearn.preprocessing import OneHotEncoder, RobustScaler
 
     day_onehot = pd.DataFrame(
         OneHotEncoder(sparse=False, categories="auto").fit_transform(combined.day[:, None]),
